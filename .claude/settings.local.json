@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Recurse \"c:\\\\Users\\\\analista.programador\\\\Desktop\\\\automatizacion-centro-documentacion\\\\agente-marquillas\")",
+      "Bash(Select-Object FullName)"
+    ]
+  }
+}
