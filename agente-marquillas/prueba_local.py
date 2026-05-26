@@ -25,6 +25,7 @@ from agente import (
     extraer_pdf_del_zip,
     leer_texto_del_pdf,
     verificar_documento_con_claude,
+    verificar_pdf_con_imagenes,
 )
 
 # Cargar variables de entorno desde .env
@@ -223,6 +224,33 @@ def main_prueba() -> None:
 
     # Paso 6: Mostrar resultado
     mostrar_resultado_final(resultado)
+
+    # Paso 7: Ofrecer prueba con imágenes si faltan datos del emisor
+    nit_emisor        = resultado.get("nit_emisor", "")
+    razon_social_emisor = resultado.get("razon_social_emisor", "")
+    if nit_emisor == "NO ENCONTRADO" or razon_social_emisor == "NO ENCONTRADA":
+        print()
+        print("⚠️  El resultado tiene NIT o razón social del proveedor como NO ENCONTRADO.")
+        respuesta_img = input("¿Intentar verificación con imágenes? (s/n): ").strip().lower()
+        if respuesta_img == "s":
+            print("\n🖼️  Intentando con imágenes...")
+            resultado_img = verificar_pdf_con_imagenes(bytes_pdf, instrucciones)
+            mostrar_resultado_final(resultado_img)
+
+            # Comparar campos que mejoraron
+            campos = ["nit_emisor", "razon_social_emisor", "nit_encontrado", "razon_social_encontrada", "numero_factura"]
+            mejoras = [
+                c for c in campos
+                if resultado.get(c) in ("NO ENCONTRADO", "NO ENCONTRADA")
+                and resultado_img.get(c) not in ("NO ENCONTRADO", "NO ENCONTRADA", None, "")
+            ]
+            print()
+            if mejoras:
+                print("✅ Campos que se encontraron con imágenes y antes decían NO ENCONTRADO:")
+                for campo in mejoras:
+                    print(f"   {campo}: {resultado_img.get(campo)}")
+            else:
+                print("ℹ️  Las imágenes no aportaron datos adicionales respecto al texto.")
 
 
 # Punto de entrada estándar de Python

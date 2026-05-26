@@ -42,7 +42,10 @@ AZURE_CLIENT_SECRET = os.getenv("AZURE_CLIENT_SECRET", "")
 AZURE_TENANT_ID     = os.getenv("AZURE_TENANT_ID", "")
 EMAIL_MONITOREAR    = os.getenv("EMAIL_MONITOREAR", "")
 EMAIL_DESTINO       = os.getenv("EMAIL_DESTINO", "")
+EMAIL_SABANETA      = os.getenv("EMAIL_SABANETA")
+EMAIL_RIONEGRO      = os.getenv("EMAIL_RIONEGRO")
 INTERVALO_MINUTOS   = int(os.getenv("INTERVALO_MINUTOS", "5"))
+ARCHIVO_PROVEEDORES = "proveedores.json"
 
 # ═══ CONSTANTES ═══
 NIT_ESPERADO          = "890900314"
@@ -54,19 +57,18 @@ URL_GRAPH_API         = "https://graph.microsoft.com/v1.0"
 ARCHIVO_INSTRUCCIONES = "agente.md"
 TAMANO_MAXIMO_LOG             = 5 * 1024 * 1024   # 5 MB — cada archivo rota al llegar aquí
 
-# ── Rutas de las 4 carpetas y archivos de log especializados ──
-RUTA_LOG_ERRORES              = os.path.join("logs", "errores",                    "errores.log")
-RUTA_LOG_APROBADOS_AGENTE     = os.path.join("logs", "aprobados_agente",           "aprobados_agente.log")
-RUTA_LOG_RECHAZADOS_AGENTE    = os.path.join("logs", "rechazados_agente",          "rechazados_agente.log")
-RUTA_LOG_APROBADOS_HUMANOS    = os.path.join("logs", "aprobados_area_responsable", "aprobados_area_responsable.log")
+# ── Rutas de las 5 carpetas y archivos de log especializados ──
+RUTA_LOG_ERRORES                    = os.path.join("logs", "errores",                    "errores.log")
+RUTA_LOG_APROBADOS_AGENTE           = os.path.join("logs", "aprobados_agente",           "aprobados_agente.log")
+RUTA_LOG_RECHAZADOS_AGENTE          = os.path.join("logs", "rechazados_agente",          "rechazados_agente.log")
+RUTA_LOG_APROBADOS_HUMANOS          = os.path.join("logs", "aprobados_area_responsable", "aprobados_area_responsable.log")
+RUTA_LOG_PROVEEDORES_NO_ENCONTRADOS = os.path.join("logs", "proveedores_no_encontrados", "proveedores_no_encontrados.log")
+RUTA_LOG_RECHAZADOS_HUMANOS         = os.path.join("logs", "rechazados_area_responsable", "rechazados_area_responsable.log")
 
-# ── Fase 2: detección de respuestas de aprobación ──
-PALABRAS_APROBACION = [
-    "aprobado", "aprobada", "autorizado", "autorizada",
-    "autorizar", "aprobar", "ok", "dale", "listo",
-    "conforme", "confirmado", "confirmada", "proceder",
-]
-CARPETA_FACTURAS_APROBADAS = "FACTURAS APROBADAS"
+# ── Fase 2 / 5: detección y clasificación de respuestas humanas ──
+CARPETA_FACTURAS_APROBADAS  = os.getenv("CARPETA_APROBADAS",  "APROBADAS")
+CARPETA_FACTURAS_RECHAZADAS = os.getenv("CARPETA_RECHAZADAS", "RECHAZADAS")
+ARCHIVO_CLASIFICADOR = "clasificador.md"
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -85,8 +87,8 @@ def _crear_logger_archivo(nombre: str, ruta: str) -> logging.Logger:
 
 
 def _configurar_sistema_de_logs() -> tuple:
-    """Crea las 4 carpetas de log y configura un logger de errores (consola+archivo) y 3 loggers de archivo."""
-    for ruta in [RUTA_LOG_ERRORES, RUTA_LOG_APROBADOS_AGENTE, RUTA_LOG_RECHAZADOS_AGENTE, RUTA_LOG_APROBADOS_HUMANOS]:
+    """Crea las 6 carpetas de log y configura un logger de errores (consola+archivo) y 5 loggers de archivo."""
+    for ruta in [RUTA_LOG_ERRORES, RUTA_LOG_APROBADOS_AGENTE, RUTA_LOG_RECHAZADOS_AGENTE, RUTA_LOG_APROBADOS_HUMANOS, RUTA_LOG_PROVEEDORES_NO_ENCONTRADOS, RUTA_LOG_RECHAZADOS_HUMANOS]:
         Path(os.path.dirname(ruta)).mkdir(parents=True, exist_ok=True)
     logger_main = logging.getLogger("agente_marquillas")
     logger_main.setLevel(logging.ERROR)
@@ -95,41 +97,66 @@ def _configurar_sistema_de_logs() -> tuple:
     manejador_consola.setFormatter(logging.Formatter("[%(asctime)s] %(message)s", datefmt="%H:%M:%S"))
     logger_main.addHandler(manejador_consola)
     manejador_errores = RotatingFileHandler(RUTA_LOG_ERRORES, maxBytes=TAMANO_MAXIMO_LOG, backupCount=3, encoding="utf-8")
-    manejador_errores.setFormatter(logging.Formatter("[%(asctime)s] ERROR | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+    manejador_errores.setFormatter(logging.Formatter("[%(asctime)s] ERROR CRÍTICO | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
     logger_main.addHandler(manejador_errores)
     return (logger_main,
-            _crear_logger_archivo("aprobados_agente",  RUTA_LOG_APROBADOS_AGENTE),
-            _crear_logger_archivo("rechazados_agente", RUTA_LOG_RECHAZADOS_AGENTE),
-            _crear_logger_archivo("aprobados_humanos", RUTA_LOG_APROBADOS_HUMANOS))
+            _crear_logger_archivo("aprobados_agente",             RUTA_LOG_APROBADOS_AGENTE),
+            _crear_logger_archivo("rechazados_agente",            RUTA_LOG_RECHAZADOS_AGENTE),
+            _crear_logger_archivo("aprobados_humanos",            RUTA_LOG_APROBADOS_HUMANOS),
+            _crear_logger_archivo("proveedores_no_encontrados",   RUTA_LOG_PROVEEDORES_NO_ENCONTRADOS),
+            _crear_logger_archivo("rechazados_humanos",           RUTA_LOG_RECHAZADOS_HUMANOS))
 
 
 # Inicializar los loggers al momento de importar el módulo
-log, log_aprobados_agente, log_rechazados_agente, log_aprobados_humanos = _configurar_sistema_de_logs()
+log, log_aprobados_agente, log_rechazados_agente, log_aprobados_humanos, log_proveedores_no_encontrados, log_rechazados_humanos = _configurar_sistema_de_logs()
 
 
-def _registrar_aprobado_agente(correo_id: str, asunto: str, resultado: dict) -> None:
+def _registrar_aprobado_agente(correo_id: str, asunto: str, resultado: dict, nit_emisor_limpio: str = "", lista_almacen: str = "") -> None:
     """Registra en el log especializado cuando el agente aprueba automáticamente una factura."""
-    emisor       = resultado.get("razon_social_emisor", "N/A")
-    nit          = resultado.get("nit_encontrado", "N/A")
-    razon_social = resultado.get("razon_social_encontrada", "N/A")
+    _NOMBRE_ALMACEN = {
+        "almacenSabaneta":         "Sabaneta",
+        "almacenRionegro":         "Rionegro",
+        "almacenRionegroSabaneta": "Sabaneta y Rionegro",
+    }
+    emisor          = resultado.get("razon_social_emisor", "N/A")
+    numero_factura  = resultado.get("numero_factura", "N/A")
+    nombre_almacen  = _NOMBRE_ALMACEN.get(lista_almacen, lista_almacen)
     log_aprobados_agente.info(
-        f"APROBADO | Correo: {correo_id} | Asunto: {asunto} | "
-        f"Emisor: {emisor} | NIT: {nit} | Razón social: {razon_social}"
+        f"APROBADO | Correo: {asunto} | Proveedor: {emisor} | "
+        f"NIT Proveedor: {nit_emisor_limpio} | Factura: {numero_factura} | "
+        f"Almacén destino: {nombre_almacen}"
     )
 
 
 def _registrar_rechazado_agente(correo_id: str, asunto: str, resultado: dict) -> None:
     """Registra en el log especializado cuando el agente rechaza una factura."""
-    motivo = resultado.get("motivo", "Sin motivo especificado")
+    nit_encontrado        = resultado.get("nit_encontrado", "N/A")
+    razon_social_encontrada = resultado.get("razon_social_encontrada", "N/A")
+    motivo                = resultado.get("motivo", "Sin motivo especificado")
     log_rechazados_agente.info(
-        f"RECHAZADO | Correo: {correo_id} | Asunto: {asunto} | Motivo: {motivo}"
+        f"RECHAZADO | Correo: {asunto} | NIT Marquillas encontrado: {nit_encontrado} | "
+        f"Razón social encontrada: {razon_social_encontrada} | Motivo: {motivo}"
     )
 
 
 def _registrar_aprobado_humano(correo_id: str, nombre_pdf: str) -> None:
     """Registra en el log especializado cuando un humano aprueba y el original se mueve al archivo."""
     log_aprobados_humanos.info(
-        f"APROBADO POR HUMANO | Correo original: {correo_id} | PDF: {nombre_pdf}"
+        f"APROBADO POR EL ÁREA ENCARGADA | Proveedor: {nombre_pdf}"
+    )
+
+
+def _registrar_rechazado_humano(correo_id: str, nombre_proveedor: str) -> None:
+    """Registra en el log especializado cuando un humano rechaza una factura."""
+    log_rechazados_humanos.info(
+        f"RECHAZADO POR EL ÁREA ENCARGADA | Proveedor: {nombre_proveedor}"
+    )
+
+
+def _registrar_proveedor_no_encontrado(nit_limpio: str, razon_social: str) -> None:
+    """Registra en el log especializado cuando el NIT del emisor no existe en proveedores.json."""
+    log_proveedores_no_encontrados.info(
+        f"NO ENCONTRADO | NIT Proveedor: {nit_limpio} | Nombre Proveedor: {razon_social}"
     )
 
 
@@ -163,6 +190,29 @@ def cargar_instrucciones_agente() -> str:
         raise
     except Exception as error:
         log.error(f"💥 Error inesperado al leer {ARCHIVO_INSTRUCCIONES}: {error}")
+        raise
+
+
+def cargar_instrucciones_clasificador() -> str:
+    """
+    Lee el archivo clasificador.md con las instrucciones para el clasificador de respuestas humanas.
+    Usado en Fase 5 para determinar si una respuesta es APROBADO, RECHAZADO o NINGUNO.
+    No recibe parámetros — usa la constante ARCHIVO_CLASIFICADOR.
+    Retorna: texto completo del archivo clasificador.md como string.
+    Lanza: FileNotFoundError si el archivo no existe en la carpeta del proyecto.
+    """
+    try:
+        ruta_archivo = Path(ARCHIVO_CLASIFICADOR)
+        if not ruta_archivo.exists():
+            raise FileNotFoundError(
+                f"No se encontró '{ARCHIVO_CLASIFICADOR}'. "
+                "Asegúrate de ejecutar el agente desde la carpeta del proyecto."
+            )
+        return ruta_archivo.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        raise
+    except Exception as error:
+        log.error(f"💥 Error inesperado al leer {ARCHIVO_CLASIFICADOR}: {error}")
         raise
 
 
@@ -335,26 +385,57 @@ def extraer_pdf_del_zip(bytes_zip: bytes) -> tuple:
 
 def leer_texto_del_pdf(bytes_pdf: bytes) -> str:
     """
-    Extrae el texto visible de un PDF usando PyMuPDF, sin guardar el PDF en disco.
-    Recorre todas las páginas del documento y concatena el texto de cada una.
-    Limita el resultado a MAXIMO_CARACTERES_PDF para no exceder los límites de tokens de Claude.
+    Extrae el texto visible de un PDF usando PyMuPDF con estrategia de doble extracción.
+    Primera pasada: get_text("text") — extracción estándar por página.
+    Si la primera página devuelve menos de 200 caracteres, segunda pasada con get_text("blocks")
+    que captura áreas que el método simple omite; ambos resultados se combinan sin duplicados.
+    Limita el resultado final a MAXIMO_CARACTERES_PDF para no exceder los tokens de Claude.
     Recibe: bytes_pdf (bytes) — contenido binario del PDF extraído del ZIP.
-    Retorna: string con el texto completo extraído, truncado a 4000 caracteres máximo.
+    Retorna: string con el texto más completo posible, truncado a MAXIMO_CARACTERES_PDF.
     Retorna string vacío si el PDF es una imagen escaneada sin texto seleccionable.
     Lanza: Exception si los bytes no corresponden a un PDF válido.
     """
     try:
-        # Abrir el PDF directamente desde los bytes — fitz acepta bytes como stream
         documento = fitz.open(stream=bytes_pdf, filetype="pdf")
 
         texto_total = ""
         for numero_pagina in range(len(documento)):
-            pagina      = documento[numero_pagina]
-            texto_total += pagina.get_text()
+            pagina = documento[numero_pagina]
+
+            # Primera pasada: extracción estándar
+            texto_simple = pagina.get_text("text")
+
+            # Segunda pasada solo en primera página si el texto simple es escaso
+            if numero_pagina == 0 and len(texto_simple) < 200:
+                bloques = pagina.get_text("blocks")
+                # Cada bloque es una tupla; el índice 4 contiene el texto
+                texto_bloques = "\n".join(
+                    b[4] for b in bloques if isinstance(b[4], str)
+                )
+                # Combinar: agregar líneas de bloques que no estén ya en el texto simple
+                lineas_simples  = set(texto_simple.splitlines())
+                lineas_extra    = [
+                    linea for linea in texto_bloques.splitlines()
+                    if linea.strip() and linea not in lineas_simples
+                ]
+                texto_pagina = texto_simple + "\n".join(lineas_extra)
+            else:
+                texto_pagina = texto_simple
+
+            texto_total += texto_pagina
 
         documento.close()
 
-        # Truncar el texto para respetar el límite de tokens de Claude AI
+        # Avisar si la primera página tiene muy poco texto — posible PDF con imágenes
+        primera_pagina_chars = len(texto_total.split("\f")[0]) if "\f" in texto_total else len(texto_total)
+        if primera_pagina_chars < 300:
+            log.error(
+                f"Módulo: leer_texto_del_pdf | "
+                f"Descripción: primera página con solo {primera_pagina_chars} caracteres — "
+                f"el PDF puede tener encabezado en imagen o formato especial | "
+                f"Detalle técnico: considerar extracción OCR"
+            )
+
         texto_truncado = texto_total[:MAXIMO_CARACTERES_PDF]
         log.info(
             f"📝 Texto extraído: {len(texto_total)} caracteres "
@@ -418,36 +499,142 @@ def verificar_documento_con_claude(texto_pdf: str, instrucciones: str) -> dict:
         raise
 
 
+def convertir_pdf_a_imagenes(bytes_pdf: bytes) -> list:
+    """
+    Convierte las primeras 2 páginas de un PDF a imágenes en base64.
+
+    Usa PyMuPDF que ya está instalado. Se usa como respaldo cuando
+    Claude no encuentra el NIT o razón social del proveedor en el
+    texto del PDF, lo que indica que están en una imagen.
+
+    Recibe:
+    - bytes_pdf: contenido del PDF en memoria como bytes
+
+    Retorna: lista de strings en base64, máximo 2 páginas.
+    Resolución 150 DPI — suficiente para leer texto sin gastar créditos.
+    """
+    try:
+        documento  = fitz.open(stream=bytes_pdf, filetype="pdf")
+        paginas    = min(len(documento), 2)
+        imagenes   = []
+        matriz_dpi = fitz.Matrix(150 / 72, 150 / 72)  # 150 DPI
+
+        for numero_pagina in range(paginas):
+            pagina       = documento[numero_pagina]
+            pixmap       = pagina.get_pixmap(matrix=matriz_dpi)
+            bytes_imagen = pixmap.tobytes("png")
+            imagenes.append(base64.b64encode(bytes_imagen).decode("utf-8"))
+
+        documento.close()
+        log.info(f"🖼️  PDF convertido a {len(imagenes)} imagen(es) para visión")
+        return imagenes
+
+    except Exception as error:
+        log.error(f"💥 Error al convertir PDF a imágenes: {error}")
+        raise
+
+
+def verificar_pdf_con_imagenes(bytes_pdf: bytes, instrucciones: str) -> dict:
+    """
+    Verifica un PDF enviando imágenes de sus páginas a Claude
+    en vez del texto extraído.
+
+    Solo se llama cuando verificar_documento_con_claude() no encontró
+    el NIT o razón social del proveedor — señal de PDF con imágenes.
+
+    Recibe:
+    - bytes_pdf: contenido del PDF en memoria como bytes
+    - instrucciones: contenido del archivo agente.md
+
+    Retorna: diccionario con el mismo formato JSON que
+    verificar_documento_con_claude()
+    """
+    try:
+        log.info("🤖 Consultando a Claude con imágenes del PDF...")
+        imagenes_b64      = convertir_pdf_a_imagenes(bytes_pdf)
+        cliente_anthropic = Anthropic(api_key=ANTHROPIC_API_KEY)
+
+        contenido_usuario = [
+            {
+                "type": "image",
+                "source": {
+                    "type":       "base64",
+                    "media_type": "image/png",
+                    "data":       imagen_b64,
+                },
+            }
+            for imagen_b64 in imagenes_b64
+        ]
+        contenido_usuario.append({
+            "type": "text",
+            "text": "Analiza estas imágenes del PDF de factura y extrae la información solicitada.",
+        })
+
+        respuesta_claude = cliente_anthropic.messages.create(
+            model=MODELO_CLAUDE,
+            max_tokens=500,
+            system=instrucciones,
+            messages=[{"role": "user", "content": contenido_usuario}]
+        )
+
+        texto_respuesta = respuesta_claude.content[0].text.strip()
+
+        # Limpiar bloques de código Markdown que Claude podría agregar por error
+        if "```" in texto_respuesta:
+            partes = texto_respuesta.split("```")
+            texto_respuesta = partes[1] if len(partes) > 1 else texto_respuesta
+            if texto_respuesta.startswith("json"):
+                texto_respuesta = texto_respuesta[4:].strip()
+
+        return json.loads(texto_respuesta)
+
+    except json.JSONDecodeError:
+        log.error("⚠️  Claude (visión) no respondió con JSON válido")
+        raise
+    except Exception as error:
+        log.error(f"💥 Error al verificar PDF con imágenes: {error}")
+        raise
+
+
 def enviar_correo_aprobado(
-    token: str, bytes_pdf: bytes, nombre_pdf: str, resultado: dict
+    token: str, bytes_pdf: bytes, nombre_pdf: str, resultado: dict,
+    destinatario: str = None
 ) -> None:
     """
-    Envía un correo electrónico con el PDF adjunto al destinatario configurado para su revisión.
+    Envía un correo electrónico con el PDF adjunto al destinatario indicado para su revisión.
     Solo se llama cuando Claude verifica que el NIT y la razón social son correctos (aprobado=True).
-    El asunto es 'FACTURA REVISADA Y ENVIADA' para que la respuesta del aprobador sea detectada.
+    El asunto es '{razon_social_emisor} - {numero_factura}' y el cuerpo incluye REF-AGENTE para detección de respuestas.
     El cuerpo incluye los datos del proveedor emisor, el NIT verificado y la razón social de Marquillas.
     Recibe:
       - token (str): token de acceso de Microsoft.
       - bytes_pdf (bytes): contenido binario del PDF a adjuntar en el correo.
       - nombre_pdf (str): nombre del archivo PDF para mostrarlo como adjunto.
       - resultado (dict): diccionario de Claude con nit_encontrado, razon_social_encontrada y razon_social_emisor.
+      - destinatario (str): correo destino; si es None usa EMAIL_DESTINO como fallback.
     No retorna nada. Lanza: Exception si hay error al enviar via Microsoft Graph.
     """
     try:
+        correo_destino    = destinatario if destinatario else EMAIL_DESTINO
         # Codificar el PDF en base64 — formato requerido por Graph API para adjuntos
         contenido_pdf_b64 = base64.b64encode(bytes_pdf).decode("utf-8")
         emisor            = resultado.get("razon_social_emisor", "N/A")
+        numero_factura    = resultado.get("numero_factura", "")
 
-        cuerpo_html = (
-            "<p><b>Factura revisada por el Agente Marquillas</b></p>"
-            f"<p><b>Proveedor:</b> {emisor}</p>"
+        asunto_correo = f"{emisor} - {numero_factura}"
+        cuerpo_html   = (
+            "<p>Buen día,</p>"
+            "<p>Comparto la siguiente factura para su revisión y gestión/aceptación.</p>"
+            "<br>"
+            f"<p style=\"color: white; font-size: 1px;\">REF-AGENTE: {emisor} - {numero_factura}</p>"
+            "<br>"
+            "<p><i>Correo enviado por agente de automatización Marquillas.</i></p>"
         )
 
         estructura_correo = {
             "message": {
-                "subject": f"FACTURA REVISADA Y ENVIADA — {nombre_pdf}",
+                "subject": asunto_correo,
                 "body": {"contentType": "HTML", "content": cuerpo_html},
-                "toRecipients": [{"emailAddress": {"address": EMAIL_DESTINO}}],
+                "toRecipients": [{"emailAddress": {"address": correo_destino}}],
                 "attachments": [{
                     "@odata.type": "#microsoft.graph.fileAttachment",
                     "name": nombre_pdf,
@@ -462,7 +649,7 @@ def enviar_correo_aprobado(
 
         respuesta = requests.post(url_envio, headers=encabezados, json=estructura_correo, timeout=30)
         respuesta.raise_for_status()
-        log.info(f"📤 Correo enviado a {EMAIL_DESTINO}")
+        log.info(f"📤 Correo enviado a {correo_destino}")
 
     except Exception as error:
         log.error(f"💥 Error al enviar correo aprobado: {error}")
@@ -527,32 +714,15 @@ def _registrar_y_actuar(
 # FASE 2 — DETECCIÓN Y PROCESAMIENTO DE RESPUESTAS DE APROBACIÓN
 # ═══════════════════════════════════════════════════════════════
 
-def contiene_palabra_aprobacion(texto: str) -> bool:
+def es_respuesta_humana(correo: dict) -> bool:
     """
-    Verifica si un texto contiene alguna de las palabras de aprobación predefinidas en PALABRAS_APROBACION.
-    La búsqueda es completamente insensible a mayúsculas y minúsculas.
-    Útil para analizar el cuerpo de un correo de respuesta y detectar si el aprobador dijo "ok", "listo", etc.
-    Recibe: texto (str) — el texto a analizar (normalmente el cuerpo de un correo de Outlook).
-    Retorna: True si el texto contiene al menos una de las palabras de aprobación.
-    Retorna: False si no se encontró ninguna palabra de aprobación.
-    No lanza excepciones.
-    """
-    texto_minusculas = texto.lower()
-    for palabra in PALABRAS_APROBACION:
-        if palabra in texto_minusculas:
-            return True
-    return False
-
-
-def es_respuesta_de_aprobacion(correo: dict) -> bool:
-    """
-    Determina si un correo es una respuesta de aprobación humana a una factura revisada.
-    Para ser considerado aprobación debe cumplir TRES condiciones al mismo tiempo:
+    Determina si un correo es una respuesta humana a una factura enviada por el agente.
+    Para ser considerado respuesta humana debe cumplir DOS condiciones al mismo tiempo:
       1. El asunto contiene "RE:" — confirma que es una respuesta, no un correo nuevo.
-      2. El asunto contiene "FACTURA REVISADA Y ENVIADA" — confirma que es al correo del agente.
-      3. El cuerpo contiene al menos una palabra de PALABRAS_APROBACION.
+      2. El cuerpo contiene "REF-AGENTE:" — confirma que es respuesta a un correo del agente.
+    La clasificación de aprobación/rechazo/ninguno la realiza clasificar_respuesta_humana().
     Recibe: correo (dict) — objeto correo de Graph API con los campos 'subject' y 'body'.
-    Retorna: True si el correo cumple las TRES condiciones.
+    Retorna: True si el correo cumple las DOS condiciones al mismo tiempo.
     Retorna: False en cualquier otro caso o si ocurre algún error.
     No lanza excepciones.
     """
@@ -560,13 +730,15 @@ def es_respuesta_de_aprobacion(correo: dict) -> bool:
         asunto    = correo.get("subject", "").upper()
         contenido = correo.get("body", {}).get("content", "")
 
-        # Condición 1 y 2: el asunto es una respuesta (RE:) al correo correcto del agente
-        asunto_valido = ("RE:" in asunto) and ("FACTURA REVISADA Y ENVIADA" in asunto)
-        if not asunto_valido:
+        # Condición 1: el asunto es una respuesta (RE:)
+        if "RE:" not in asunto:
             return False
 
-        # Condición 3: el cuerpo contiene alguna palabra de aprobación
-        return contiene_palabra_aprobacion(contenido)
+        # Condición 2: el cuerpo contiene la marca del agente
+        if "REF-AGENTE:" not in contenido:
+            return False
+
+        return True
 
     except Exception:
         return False
@@ -736,14 +908,13 @@ def procesar_aprobacion(token: str, correo_respuesta: dict) -> None:
 
 def obtener_correos_aprobacion(token: str) -> list:
     """
-    Obtiene correos no leídos cuyo asunto comienza con 'RE:' y los filtra en Python.
-    Usar startswith(subject,'RE:') en el filtro de Graph API reduce el tráfico de red:
+    Obtiene correos no leídos cuyo asunto comienza con 'RE:' para candidatos a aprobación.
+    Usar startswith(subject,'RE:') en el filtro de Graph API pre-filtra en el servidor:
     solo trae respuestas, nunca correos originales enviados por el agente.
-    El filtrado final en Python exige que el asunto contenga 'FACTURA REVISADA Y ENVIADA'
-    para asegurar que sea una respuesta al correo específico del agente, no cualquier RE:.
+    La validación definitiva (REF-AGENTE: + palabra de aprobación) la hace es_respuesta_de_aprobacion().
     Registra en el log todos los correos candidatos encontrados para facilitar el diagnóstico.
     Recibe: token (str) — token de acceso obtenido con obtener_token_microsoft().
-    Retorna: lista de correos cuyo asunto contiene 'RE:' y 'FACTURA REVISADA Y ENVIADA'.
+    Retorna: lista de todos los correos no leídos cuyo asunto comienza con 'RE:'.
     Retorna lista vacía [] si no hay candidatos.
     Lanza: Exception si hay error de red o la llamada a Graph API falla.
     """
@@ -761,26 +932,20 @@ def obtener_correos_aprobacion(token: str) -> list:
         respuesta = requests.get(url_correos, headers=encabezados, params=parametros, timeout=30)
         respuesta.raise_for_status()
 
-        correos_re = respuesta.json().get("value", [])
+        candidatos = respuesta.json().get("value", [])
 
         # Log de diagnóstico — mostrar qué correos con RE: se encontraron
-        log.info(f"🔎 Correos no leídos con 'RE:' en asunto: {len(correos_re)}")
-        for correo in correos_re:
+        log.info(f"🔎 Correos no leídos con 'RE:' en asunto: {len(candidatos)}")
+        for correo in candidatos:
             asunto_diag   = correo.get("subject", "Sin asunto")
             tiene_adjunto = correo.get("hasAttachments", False)
             icono_adjunto = "📎" if tiene_adjunto else "  "
             log.info(f"   {icono_adjunto} '{asunto_diag}'")
 
-        # Filtrado final en Python: debe contener 'FACTURA REVISADA Y ENVIADA'
-        candidatos = [
-            c for c in correos_re
-            if "factura revisada y enviada" in c.get("subject", "").lower()
-        ]
-
         if candidatos:
-            log.info(f"📨 {len(candidatos)} correo(s) candidato(s) a aprobación detectado(s)")
+            log.info(f"📨 {len(candidatos)} correo(s) con 'RE:' encontrado(s) — se validarán con REF-AGENTE")
         else:
-            log.info("📭 Ningún correo con 'RE: FACTURA REVISADA Y ENVIADA' encontrado")
+            log.info("📭 Ningún correo con 'RE:' en el asunto encontrado")
 
         return candidatos
 
@@ -789,13 +954,113 @@ def obtener_correos_aprobacion(token: str) -> list:
         raise
 
 
+# ═══════════════════════════════════════════════════════════════
+# FASE 5 — CLASIFICACIÓN DE RESPUESTAS HUMANAS
+# ═══════════════════════════════════════════════════════════════
+
+def clasificar_con_claude(texto: str, instrucciones_clasificador: str) -> str:
+    """
+    Clasifica el cuerpo de un correo de respuesta humana usando Claude Haiku.
+    Antes de enviar a Claude, recorta el historial citado de Outlook para que el modelo
+    analice únicamente el texto nuevo escrito por el humano.
+    Recibe:
+      - texto (str): cuerpo completo del correo (puede incluir historial de Outlook).
+      - instrucciones_clasificador (str): contenido de clasificador.md.
+    Retorna: "APROBADO", "RECHAZADO" o "NINGUNO" (según responda Claude).
+    Retorna "NINGUNO" si Claude responde con algo inesperado o hay un error.
+    """
+    # Cortar el historial citado de Outlook — solo analizar lo que escribió el humano
+    marcadores = ["De:", "From:", "Enviado:", "Sent:", "________________________________"]
+    lineas = texto.splitlines()
+    for i, linea in enumerate(lineas):
+        linea_strip = linea.strip()
+        if any(linea_strip.startswith(m) for m in marcadores):
+            texto = "\n".join(lineas[:i]).strip()
+            break
+
+    if not texto:
+        return "NINGUNO"
+
+    try:
+        cliente_anthropic = Anthropic(api_key=ANTHROPIC_API_KEY)
+        respuesta_claude  = cliente_anthropic.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=10,
+            system=instrucciones_clasificador,
+            messages=[{"role": "user", "content": texto}]
+        )
+        resultado = respuesta_claude.content[0].text.strip().upper()
+        if resultado in ("APROBADO", "RECHAZADO", "NINGUNO"):
+            return resultado
+        log.error(f"⚠️  Clasificador Claude retornó valor inesperado: '{resultado}' — se trata como NINGUNO")
+        return "NINGUNO"
+    except Exception as error:
+        log.error(f"💥 Error al consultar clasificador Claude: {error}")
+        return "NINGUNO"
+
+
+def clasificar_respuesta_humana(correo: dict, instrucciones_clasificador: str) -> str:
+    """
+    Clasifica la intención del cuerpo de un correo de respuesta humana usando Claude Haiku.
+    Recibe:
+      - correo (dict): objeto correo de Graph API con el campo 'body'.
+      - instrucciones_clasificador (str): contenido de clasificador.md.
+    Retorna: "APROBADO", "RECHAZADO" o "NINGUNO".
+    """
+    texto = correo.get("body", {}).get("content", "")
+    log.info("🤖 Consultando clasificador Claude...")
+    clasificacion = clasificar_con_claude(texto, instrucciones_clasificador)
+    log.info(f"🏷️  Clasificación: {clasificacion}")
+    return clasificacion
+
+
+def procesar_rechazo(token: str, correo_respuesta: dict) -> None:
+    """
+    Orquesta todo el proceso cuando se detecta una respuesta de rechazo humana.
+    Pasos: busca el correo original del hilo → mueve el correo a CARPETA_FACTURAS_RECHAZADAS.
+    Si la carpeta no existe, registra el error claramente y no falla el programa.
+    Recibe:
+      - token (str): token de acceso de Microsoft.
+      - correo_respuesta (dict): el correo de respuesta detectado como rechazo.
+    No retorna nada — todos los eventos quedan registrados en el log.
+    No propaga excepciones — los errores son capturados y registrados internamente.
+    """
+    asunto = correo_respuesta.get("subject", "Sin asunto")
+    log.info(f"📨 Respuesta de rechazo detectada: '{asunto}'")
+    try:
+        correo_original = obtener_correo_original_del_hilo(
+            token, correo_respuesta.get("conversationId", "")
+        )
+        if not correo_original:
+            log.error("⚠️  No se encontró el correo original del hilo — se omite el rechazo")
+            return
+
+        adjunto_pdf  = _encontrar_adjunto_pdf(correo_original)
+        nombre_pdf   = adjunto_pdf.get("name", "factura.pdf") if adjunto_pdf else "factura.pdf"
+
+        log.info(f"📁 Moviendo a carpeta {CARPETA_FACTURAS_RECHAZADAS}...")
+        carpeta_id = obtener_id_carpeta_outlook(token, CARPETA_FACTURAS_RECHAZADAS)
+        if not carpeta_id:
+            log.error(f"❌ La carpeta '{CARPETA_FACTURAS_RECHAZADAS}' no existe en Outlook. Créala manualmente.")
+            return
+
+        mover_correo_a_carpeta(token, correo_original["id"], carpeta_id)
+        _registrar_rechazado_humano(correo_original["id"], nombre_pdf)
+        log.info(f"✅ Factura {nombre_pdf} movida a {CARPETA_FACTURAS_RECHAZADAS} exitosamente")
+
+    except Exception as error:
+        log.error(f"💥 Error al procesar el rechazo del correo '{asunto}': {error}")
+
+
 def procesar_un_correo(token: str, correo: dict, instrucciones: str) -> None:
     """
     Orquesta el procesamiento de un correo individual identificando cuál de los dos casos aplica.
     CASO 1 — Factura nueva: el correo tiene adjunto ZIP → verifica el PDF con Claude AI.
     CASO 2 — Aprobación humana: el correo es una respuesta con palabra de aprobación → mueve el original.
-    Si el correo no corresponde a ningún caso, lo ignora y lo marca como leído.
-    El correo siempre se marca como leído al final, sin importar el caso o si hubo error.
+    El correo se marca como leído ÚNICAMENTE cuando el flujo completo termina exitosamente:
+      - Caso 1: Claude aprobó + proveedor encontrado + correo enviado.
+      - Caso 2: aprobación detectada + correo original encontrado + movido a carpeta.
+    En cualquier otro caso (rechazo, proveedor no encontrado, error) el correo queda sin leer.
     Recibe:
       - token (str): token de acceso de Microsoft.
       - correo (dict): datos del correo con asunto, cuerpo y adjuntos según corresponda.
@@ -805,9 +1070,18 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str) -> None:
     correo_id = correo.get("id", "")
     asunto    = correo.get("subject", "Sin asunto")
     try:
-        # ── Caso 2: Respuesta de aprobación humana ──────────────────────────────
-        if es_respuesta_de_aprobacion(correo):
-            procesar_aprobacion(token, correo)
+        # ── Caso 2: Respuesta humana a una factura del agente ───────────────────
+        if es_respuesta_humana(correo):
+            instrucciones_clasificador = cargar_instrucciones_clasificador()
+            clasificacion = clasificar_respuesta_humana(correo, instrucciones_clasificador)
+            if clasificacion == "APROBADO":
+                procesar_aprobacion(token, correo)
+                marcar_correo_como_leido(token, correo_id)
+            elif clasificacion == "RECHAZADO":
+                procesar_rechazo(token, correo)
+                marcar_correo_como_leido(token, correo_id)
+            else:
+                log.info(f"⏭️  Respuesta clasificada como NINGUNO — se ignora: '{asunto}'")
             return
 
         # ── Caso 1: Factura nueva con adjunto ZIP ────────────────────────────────
@@ -818,24 +1092,197 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str) -> None:
             nombre_pdf, bytes_pdf = extraer_pdf_del_zip(bytes_zip)
             if not bytes_pdf:
                 log.warning(f"⚠️  El ZIP del correo '{asunto}' no contiene PDF — se omite")
-                return
+                return  # No marcar como leído — ZIP sin PDF no es un éxito
+
             texto_pdf = leer_texto_del_pdf(bytes_pdf)
             resultado = verificar_documento_con_claude(texto_pdf, instrucciones)
-            _registrar_y_actuar(token, resultado, bytes_pdf, nombre_pdf, correo_id, asunto)
+
+            # Respaldo de visión cuando el texto no contiene datos del emisor
+            if (resultado.get("nit_emisor") == "NO ENCONTRADO"
+                    or resultado.get("razon_social_emisor") == "NO ENCONTRADA"):
+                log.warning(
+                    "Módulo: procesar_un_correo | "
+                    "Descripción: PDF con texto insuficiente, usando respaldo de imágenes | "
+                    "Detalle técnico: nit_emisor o razon_social_emisor no encontrados en texto"
+                )
+                resultado = verificar_pdf_con_imagenes(bytes_pdf, instrucciones)
+
+            if not resultado.get("aprobado"):
+                _registrar_rechazado_agente(correo_id, asunto, resultado)
+                return  # No marcar como leído — factura rechazada por Claude
+
+            # ── Fase 4: renombrar el PDF con proveedor y número de factura ──
+            nuevo_nombre, bytes_pdf = renombrar_pdf(
+                resultado.get("razon_social_emisor", ""),
+                resultado.get("numero_factura", ""),
+                bytes_pdf,
+            )
+
+            # ── Fase 3: buscar el proveedor y determinar destinatarios ──
+            nit_limpio                      = limpiar_nit(resultado.get("nit_emisor", ""))
+            proveedores                     = cargar_proveedores()
+            nombre_proveedor, lista_almacen = buscar_proveedor_en_lista(nit_limpio, proveedores)
+
+            if lista_almacen is None:
+                log.warning(f"⚠️  NIT {nit_limpio} no encontrado en proveedores.json — no se envía correo")
+                _registrar_proveedor_no_encontrado(nit_limpio, resultado.get("razon_social_emisor", "N/A"))
+                return  # No marcar como leído — proveedor no está en el listado
+
+            _registrar_aprobado_agente(correo_id, asunto, resultado, nit_limpio, lista_almacen)
+            destinatarios = determinar_destinatarios(lista_almacen)
+            for destinatario in destinatarios:
+                enviar_correo_aprobado(token, bytes_pdf, nuevo_nombre, resultado, destinatario)
+            # Marcar como leído solo después de enviar exitosamente a todos los destinatarios
+            marcar_correo_como_leido(token, correo_id)
             return
 
         # ── Sin coincidencia: el correo no es de ninguno de los dos casos ────────
         log.info(f"⏭️  Correo ignorado (no es factura nueva ni aprobación): '{asunto}'")
+        # No marcar como leído — correo ignorado no corresponde a ningún flujo conocido
 
     except Exception as error:
         log.error(f"💥 Error procesando el correo '{asunto}': {error}")
+        # No marcar como leído — el error puede ser transitorio y conviene reintentar
 
-    finally:
-        # Siempre marcar como leído para no reprocesar en el siguiente ciclo
-        try:
-            marcar_correo_como_leido(token, correo_id)
-        except Exception:
-            pass  # El error ya fue registrado dentro de marcar_correo_como_leido()
+
+# ═══════════════════════════════════════════════════════════════
+# FASE 3 — ENRUTAMIENTO POR PROVEEDOR
+# ═══════════════════════════════════════════════════════════════
+
+def cargar_proveedores() -> dict:
+    """
+    Lee el archivo proveedores.json y retorna el diccionario completo con las tres listas de almacén.
+    Si el archivo no existe o no se puede leer, registra un error crítico y retorna un diccionario vacío.
+    No recibe parámetros — usa la constante ARCHIVO_PROVEEDORES.
+    Retorna: diccionario con las claves almacenSabaneta, almacenRionegro y almacenRionegroSabaneta.
+    """
+    try:
+        ruta = Path(ARCHIVO_PROVEEDORES)
+        if not ruta.exists():
+            log.error(f"💥 No se encontró '{ARCHIVO_PROVEEDORES}' — no se puede determinar el destinatario")
+            return {}
+        return json.loads(ruta.read_text(encoding="utf-8"))
+    except Exception as error:
+        log.error(f"💥 Error al cargar {ARCHIVO_PROVEEDORES}: {error}")
+        return {}
+
+
+def limpiar_nit(nit: str) -> str:
+    """
+    Normaliza un NIT a solo sus dígitos base, sin prefijos de texto, puntos ni dígito de verificación.
+
+    Entradas y salidas esperadas:
+      "890.300.234-3"       →  "890300234"
+      "NIT. 860.028.580-2"  →  "860028580"
+      "900718257-1"         →  "900718257"
+      "890900314-9"         →  "890900314"
+      "860028580"           →  "860028580"
+      "890.900.314"         →  "890900314"
+      "NIT:890300234"       →  "890300234"
+
+    Recibe: nit (str) — NIT tal como lo retornó Claude, con cualquier formato.
+    Retorna: string con solo los dígitos numéricos limpios.
+    Retorna string vacío si el valor recibido es None, vacío o no contiene dígitos.
+    """
+    if not nit:
+        return ""
+    nit = str(nit).strip()
+
+    # 2. Eliminar texto no numérico del inicio (ej: "NIT.", "Nit:", "nit ")
+    primer_digito = next((i for i, c in enumerate(nit) if c.isdigit()), None)
+    if primer_digito is None:
+        return ""
+    nit = nit[primer_digito:]
+
+    # 3. Eliminar todos los puntos separadores de miles
+    nit = nit.replace(".", "")
+
+    # 4. Cortar desde el primer carácter no numérico en adelante
+    #    Maneja guiones ASCII (-), en dash (–), em dash (—) y cualquier otro separador
+    resultado = ""
+    for c in nit:
+        if not c.isdigit():
+            break
+        resultado += c
+
+    return resultado.strip()   # 5. Eliminar espacios residuales
+
+
+def buscar_proveedor_en_lista(nit_proveedor: str, proveedores: dict) -> tuple:
+    """
+    Busca un NIT en las tres listas del diccionario de proveedores.
+    Recorre almacenSabaneta, almacenRionegro y almacenRionegroSabaneta en ese orden.
+    Recibe:
+      - nit_proveedor (str): NIT limpio del emisor obtenido con limpiar_nit().
+      - proveedores (dict): diccionario completo cargado con cargar_proveedores().
+    Retorna: tupla (nombre_proveedor, lista_almacen) si se encontró el NIT.
+    Retorna: (None, None) si el NIT no existe en ninguna de las tres listas.
+    Ejemplos: ("CORRUMED S.A.S", "almacenRionegroSabaneta"), ("ASHE S.A.S.", "almacenSabaneta"), (None, None).
+    """
+    for lista_nombre in ["almacenSabaneta", "almacenRionegro", "almacenRionegroSabaneta"]:
+        for entrada in proveedores.get(lista_nombre, []):
+            if entrada.get("nit_proveedor") == nit_proveedor:
+                return entrada.get("nombre_proveedor"), lista_nombre
+    return None, None
+
+
+def determinar_destinatarios(lista_almacen: str) -> list:
+    """
+    Determina la lista de correos destino según el almacén al que pertenece el proveedor.
+    Recibe: lista_almacen (str) — nombre de la lista retornado por buscar_proveedor_en_lista().
+    Retorna:
+      - almacenSabaneta         → [EMAIL_SABANETA]
+      - almacenRionegro         → [EMAIL_RIONEGRO]
+      - almacenRionegroSabaneta → [EMAIL_SABANETA, EMAIL_RIONEGRO]
+    Retorna lista vacía si el valor recibido no coincide con ninguna de las tres listas.
+    """
+    if lista_almacen == "almacenSabaneta":
+        return [EMAIL_SABANETA]
+    if lista_almacen == "almacenRionegro":
+        return [EMAIL_RIONEGRO]
+    if lista_almacen == "almacenRionegroSabaneta":
+        return [EMAIL_SABANETA, EMAIL_RIONEGRO]
+    return []
+
+
+# ═══════════════════════════════════════════════════════════════
+# FASE 4 — RENOMBRADO DE PDF Y PRESENTACIÓN DEL CORREO
+# ═══════════════════════════════════════════════════════════════
+
+def renombrar_pdf(nombre_proveedor: str, numero_factura: str, bytes_pdf: bytes) -> tuple:
+    """
+    Renombra el PDF usando el formato: NOMBRE PROVEEDOR - NUMERO FACTURA.pdf
+
+    Recibe:
+      - nombre_proveedor (str): razón social del proveedor emisor.
+      - numero_factura (str): número de factura extraído por Claude.
+      - bytes_pdf (bytes): contenido del PDF en memoria, se retorna sin modificar.
+
+    Retorna: tupla (nuevo_nombre, bytes_pdf) donde nuevo_nombre es el nombre del archivo.
+
+    Ejemplos:
+      ("ASHE S.A.S", "MDVA-61995", ...)   → "ASHE S.A.S - MDVA-61995.pdf"
+      ("DISPAPELES S.A.S.", "NO ENCONTRADO", ...) → "DISPAPELES S.A.S..pdf"
+
+    Si numero_factura es "NO ENCONTRADO" usa solo el nombre del proveedor.
+    Elimina caracteres inválidos para nombres de archivo en Windows: \\ / : * ? " < > |
+    """
+    CARACTERES_INVALIDOS = r'\/:*?"<>|'
+
+    def _limpiar(texto: str) -> str:
+        for c in CARACTERES_INVALIDOS:
+            texto = texto.replace(c, "")
+        return texto.strip()
+
+    proveedor_limpio = _limpiar(nombre_proveedor or "PROVEEDOR")
+    factura_limpia   = _limpiar(numero_factura or "")
+
+    if factura_limpia and factura_limpia.upper() != "NO ENCONTRADO":
+        nuevo_nombre = f"{proveedor_limpio} - {factura_limpia}.pdf"
+    else:
+        nuevo_nombre = f"{proveedor_limpio}.pdf"
+
+    return nuevo_nombre, bytes_pdf
 
 
 def procesar_correos() -> None:
@@ -850,6 +1297,7 @@ def procesar_correos() -> None:
     Esta función captura todas las excepciones para que el scheduler no se detenga nunca.
     """
     try:
+        print("\nSe inicia proceso de validación de correos.")
         log.info("🔍 Revisando correos nuevos...")
 
         instrucciones = cargar_instrucciones_agente()
@@ -877,6 +1325,7 @@ def procesar_correos() -> None:
                 procesar_un_correo(token_acceso, correo, instrucciones)
 
         log.info(f"⏰ Próxima revisión en {INTERVALO_MINUTOS} minutos")
+        print(f"Se finalizó la revisión de correos, se hará nuevamente en {INTERVALO_MINUTOS} minutos.")
 
     except Exception as error:
         log.error(f"💥 Error en el ciclo de revisión: {error}")
