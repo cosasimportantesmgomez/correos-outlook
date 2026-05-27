@@ -260,7 +260,7 @@ def obtener_correos_nuevos(token: str) -> list:
     Lanza: Exception si la llamada a Graph API falla (token inválido, sin conexión, etc.).
     """
     try:
-        url_correos  = f"{URL_GRAPH_API}/users/{EMAIL_MONITOREAR}/messages"
+        url_correos  = f"{URL_GRAPH_API}/users/{EMAIL_MONITOREAR}/mailFolders/inbox/messages"
         encabezados  = {"Authorization": f"Bearer {token}"}
         parametros   = {
             "$filter":  "isRead eq false and hasAttachments eq true",
@@ -273,6 +273,8 @@ def obtener_correos_nuevos(token: str) -> list:
             url_correos, headers=encabezados, params=parametros, timeout=30
         )
         respuesta.raise_for_status()
+        print(f"[DIAGNÓSTICO] URL consultada: {respuesta.url}")
+        print(f"[DIAGNÓSTICO] Total correos retornados: {len(respuesta.json().get('value', []))}")
 
         lista_correos = respuesta.json().get("value", [])
         return lista_correos
@@ -919,7 +921,7 @@ def obtener_correos_aprobacion(token: str) -> list:
     Lanza: Exception si hay error de red o la llamada a Graph API falla.
     """
     try:
-        url_correos = f"{URL_GRAPH_API}/users/{EMAIL_MONITOREAR}/messages"
+        url_correos = f"{URL_GRAPH_API}/users/{EMAIL_MONITOREAR}/mailFolders/inbox/messages"
         encabezados = {"Authorization": f"Bearer {token}"}
         # startswith('RE:') está soportado en Graph API — pre-filtra en el servidor
         # sin filtrar por hasAttachments para no perder respuestas con firma de imagen
@@ -1302,12 +1304,19 @@ def procesar_correos() -> None:
 
         instrucciones = cargar_instrucciones_agente()
         token_acceso  = obtener_token_microsoft()
+        print(f"[DIAGNÓSTICO] Token obtenido correctamente")
 
         # Correos con adjuntos — candidatos a Caso 1 (facturas nuevas en ZIP)
         correos_con_adjunto = obtener_correos_nuevos(token_acceso)
+        print(f"[DIAGNÓSTICO] Correos nuevos con ZIP encontrados: {len(correos_con_adjunto)}")
+        for c in correos_con_adjunto:
+            print(f"[DIAGNÓSTICO] - Asunto: {c.get('subject', 'sin asunto')} | Adjuntos: {c.get('hasAttachments', False)}")
 
         # Correos candidatos a Caso 2 (respuestas de aprobación, con o sin adjunto)
         correos_aprobacion  = obtener_correos_aprobacion(token_acceso)
+        print(f"[DIAGNÓSTICO] Correos de aprobación encontrados: {len(correos_aprobacion)}")
+        for c in correos_aprobacion:
+            print(f"[DIAGNÓSTICO] - Asunto: {c.get('subject', 'sin asunto')}")
 
         # Deduplicar: si un correo ya está en correos_con_adjunto no se procesa dos veces
         # (ocurre cuando el aprobador responde y su cliente agrega imágenes de firma)
