@@ -40,10 +40,11 @@ ANTHROPIC_API_KEY   = os.getenv("ANTHROPIC_API_KEY", "")
 AZURE_CLIENT_ID     = os.getenv("AZURE_CLIENT_ID", "")
 AZURE_CLIENT_SECRET = os.getenv("AZURE_CLIENT_SECRET", "")
 AZURE_TENANT_ID     = os.getenv("AZURE_TENANT_ID", "")
-EMAIL_MONITOREAR    = os.getenv("EMAIL_MONITOREAR", "")
-EMAIL_DESTINO       = os.getenv("EMAIL_DESTINO", "")
-EMAIL_SABANETA      = os.getenv("EMAIL_SABANETA")
-EMAIL_RIONEGRO      = os.getenv("EMAIL_RIONEGRO")
+EMAIL_MONITOREAR           = os.getenv("EMAIL_MONITOREAR", "")
+EMAIL_SABANETA_PRINCIPAL   = os.getenv("EMAIL_SABANETA_PRINCIPAL", "")
+EMAIL_SABANETA_COPIA       = os.getenv("EMAIL_SABANETA_COPIA", "")
+EMAIL_RIONEGRO_PRINCIPAL   = os.getenv("EMAIL_RIONEGRO_PRINCIPAL", "")
+EMAIL_RIONEGRO_COPIA       = os.getenv("EMAIL_RIONEGRO_COPIA", "")
 INTERVALO_MINUTOS   = int(os.getenv("INTERVALO_MINUTOS", "5"))
 ARCHIVO_PROVEEDORES = "proveedores.json"
 
@@ -600,23 +601,25 @@ def verificar_pdf_con_imagenes(bytes_pdf: bytes, instrucciones: str) -> dict:
 
 def enviar_correo_aprobado(
     token: str, bytes_pdf: bytes, nombre_pdf: str, resultado: dict,
-    destinatario: str = None
+    destinatarios: dict
 ) -> None:
     """
-    Envía un correo electrónico con el PDF adjunto al destinatario indicado para su revisión.
+    Envía un correo electrónico con el PDF adjunto usando destinatarios principales y en copia.
     Solo se llama cuando Claude verifica que el NIT y la razón social son correctos (aprobado=True).
     El asunto es '{razon_social_emisor} - {numero_factura}' y el cuerpo incluye REF-AGENTE para detección de respuestas.
-    El cuerpo incluye los datos del proveedor emisor, el NIT verificado y la razón social de Marquillas.
+    Se envía UN SOLO correo con todos los destinatarios — principales en toRecipients, copia en ccRecipients.
     Recibe:
       - token (str): token de acceso de Microsoft.
       - bytes_pdf (bytes): contenido binario del PDF a adjuntar en el correo.
       - nombre_pdf (str): nombre del archivo PDF para mostrarlo como adjunto.
-      - resultado (dict): diccionario de Claude con nit_encontrado, razon_social_encontrada y razon_social_emisor.
-      - destinatario (str): correo destino; si es None usa EMAIL_DESTINO como fallback.
+      - resultado (dict): diccionario de Claude con razon_social_emisor y numero_factura.
+      - destinatarios (dict): diccionario con claves "principales" y "copia", cada una lista de correos.
     No retorna nada. Lanza: Exception si hay error al enviar via Microsoft Graph.
     """
     try:
-        correo_destino    = destinatario if destinatario else EMAIL_DESTINO
+        principales = destinatarios.get("principales", [])
+        copia       = destinatarios.get("copia", [])
+
         # Codificar el PDF en base64 — formato requerido por Graph API para adjuntos
         contenido_pdf_b64 = base64.b64encode(bytes_pdf).decode("utf-8")
         emisor            = resultado.get("razon_social_emisor", "N/A")
@@ -636,7 +639,8 @@ def enviar_correo_aprobado(
             "message": {
                 "subject": asunto_correo,
                 "body": {"contentType": "HTML", "content": cuerpo_html},
-                "toRecipients": [{"emailAddress": {"address": correo_destino}}],
+                "toRecipients": [{"emailAddress": {"address": e}} for e in principales],
+                "ccRecipients": [{"emailAddress": {"address": e}} for e in copia if e],
                 "attachments": [{
                     "@odata.type": "#microsoft.graph.fileAttachment",
                     "name": nombre_pdf,
@@ -651,7 +655,7 @@ def enviar_correo_aprobado(
 
         respuesta = requests.post(url_envio, headers=encabezados, json=estructura_correo, timeout=30)
         respuesta.raise_for_status()
-        log.info(f"📤 Correo enviado a {correo_destino}")
+        log.info(f"📤 Correo enviado a {principales} con copia a {copia}")
 
     except Exception as error:
         log.error(f"💥 Error al enviar correo aprobado: {error}")
@@ -1132,9 +1136,8 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str) -> None:
 
             _registrar_aprobado_agente(correo_id, asunto, resultado, nit_limpio, lista_almacen)
             destinatarios = determinar_destinatarios(lista_almacen)
-            for destinatario in destinatarios:
-                enviar_correo_aprobado(token, bytes_pdf, nuevo_nombre, resultado, destinatario)
-            # Marcar como leído solo después de enviar exitosamente a todos los destinatarios
+            enviar_correo_aprobado(token, bytes_pdf, nuevo_nombre, resultado, destinatarios)
+            # Marcar como leído solo después de enviar exitosamente
             marcar_correo_como_leido(token, correo_id)
             return
 
@@ -1228,23 +1231,27 @@ def buscar_proveedor_en_lista(nit_proveedor: str, proveedores: dict) -> tuple:
     return None, None
 
 
-def determinar_destinatarios(lista_almacen: str) -> list:
+def determinar_destinatarios(lista_almacen: str) -> dict:
     """
-    Determina la lista de correos destino según el almacén al que pertenece el proveedor.
+    Determina los correos destino según el almacén al que pertenece el proveedor.
     Recibe: lista_almacen (str) — nombre de la lista retornado por buscar_proveedor_en_lista().
-    Retorna:
-      - almacenSabaneta         → [EMAIL_SABANETA]
-      - almacenRionegro         → [EMAIL_RIONEGRO]
-      - almacenRionegroSabaneta → [EMAIL_SABANETA, EMAIL_RIONEGRO]
-    Retorna lista vacía si el valor recibido no coincide con ninguna de las tres listas.
+    Retorna diccionario con claves "principales" y "copia":
+      - almacenSabaneta         → principales: [EMAIL_SABANETA_PRINCIPAL], copia: [EMAIL_SABANETA_COPIA]
+      - almacenRionegro         → principales: [EMAIL_RIONEGRO_PRINCIPAL], copia: [EMAIL_RIONEGRO_COPIA]
+      - almacenRionegroSabaneta → principales: [EMAIL_SABANETA_PRINCIPAL, EMAIL_RIONEGRO_PRINCIPAL],
+                                   copia:       [EMAIL_SABANETA_COPIA, EMAIL_RIONEGRO_COPIA]
+    Retorna dict vacío si el valor recibido no coincide con ninguna de las tres listas.
     """
     if lista_almacen == "almacenSabaneta":
-        return [EMAIL_SABANETA]
+        return {"principales": [EMAIL_SABANETA_PRINCIPAL], "copia": [EMAIL_SABANETA_COPIA]}
     if lista_almacen == "almacenRionegro":
-        return [EMAIL_RIONEGRO]
+        return {"principales": [EMAIL_RIONEGRO_PRINCIPAL], "copia": [EMAIL_RIONEGRO_COPIA]}
     if lista_almacen == "almacenRionegroSabaneta":
-        return [EMAIL_SABANETA, EMAIL_RIONEGRO]
-    return []
+        return {
+            "principales": [EMAIL_SABANETA_PRINCIPAL, EMAIL_RIONEGRO_PRINCIPAL],
+            "copia":       [EMAIL_SABANETA_COPIA,     EMAIL_RIONEGRO_COPIA],
+        }
+    return {}
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1348,12 +1355,13 @@ def _verificar_configuracion() -> None:
     Lanza: SystemExit con código 1 si falta alguna variable crítica (el agente no puede operar).
     """
     variables_requeridas = {
-        "ANTHROPIC_API_KEY":   ANTHROPIC_API_KEY,
-        "AZURE_CLIENT_ID":     AZURE_CLIENT_ID,
-        "AZURE_CLIENT_SECRET": AZURE_CLIENT_SECRET,
-        "AZURE_TENANT_ID":     AZURE_TENANT_ID,
-        "EMAIL_MONITOREAR":    EMAIL_MONITOREAR,
-        "EMAIL_DESTINO":       EMAIL_DESTINO,
+        "ANTHROPIC_API_KEY":        ANTHROPIC_API_KEY,
+        "AZURE_CLIENT_ID":          AZURE_CLIENT_ID,
+        "AZURE_CLIENT_SECRET":      AZURE_CLIENT_SECRET,
+        "AZURE_TENANT_ID":          AZURE_TENANT_ID,
+        "EMAIL_MONITOREAR":         EMAIL_MONITOREAR,
+        "EMAIL_SABANETA_PRINCIPAL": EMAIL_SABANETA_PRINCIPAL,
+        "EMAIL_RIONEGRO_PRINCIPAL": EMAIL_RIONEGRO_PRINCIPAL,
     }
 
     variables_faltantes = [
