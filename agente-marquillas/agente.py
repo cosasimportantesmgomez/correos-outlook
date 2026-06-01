@@ -876,42 +876,35 @@ def mover_correo_a_carpeta(token: str, correo_id: str, carpeta_id: str) -> None:
 def procesar_aprobacion(token: str, correo_respuesta: dict) -> None:
     """
     Orquesta todo el proceso cuando se detecta una respuesta de aprobación humana.
-    Pasos: busca el correo original del hilo → identifica el PDF → mueve el correo a 'FACTURAS APROBADAS'.
-    Si la carpeta 'FACTURAS APROBADAS' no existe, registra el error claramente y no falla el programa.
+    Mueve el correo de RESPUESTA (el que escribió el humano) a la carpeta APROBADAS.
+    El correo original del hilo se consulta únicamente para obtener el nombre del PDF para el log.
     Recibe:
       - token (str): token de acceso de Microsoft.
       - correo_respuesta (dict): el correo de respuesta detectado como aprobación.
     No retorna nada — todos los eventos quedan registrados en el log.
     No propaga excepciones — los errores son capturados y registrados internamente.
     """
-    asunto = correo_respuesta.get("subject", "Sin asunto")
+    asunto     = correo_respuesta.get("subject", "Sin asunto")
+    respuesta_id = correo_respuesta.get("id", "")
     log.info(f"📨 Respuesta de aprobación detectada: '{asunto}'")
     try:
-        log.info("🔍 Buscando correo original en el hilo...")
+        # Buscar el original solo para obtener el nombre del PDF para el log
         correo_original = obtener_correo_original_del_hilo(
             token, correo_respuesta.get("conversationId", "")
         )
-        if not correo_original:
-            log.error("⚠️  No se encontró el correo original del hilo — se omite la aprobación")
-            return
-
-        # Identificar el PDF adjunto en el correo original y descargarlo
-        adjunto_pdf = _encontrar_adjunto_pdf(correo_original)
+        adjunto_pdf = _encontrar_adjunto_pdf(correo_original) if correo_original else None
         nombre_pdf  = adjunto_pdf.get("name", "factura.pdf") if adjunto_pdf else "factura.pdf"
-        if adjunto_pdf:
-            log.info(f"📄 PDF encontrado en correo original: {nombre_pdf}")
-            descargar_adjunto(token, correo_original["id"], adjunto_pdf["id"])
 
-        # Obtener la carpeta destino y mover el correo original
-        log.info(f"📁 Moviendo a carpeta {CARPETA_FACTURAS_APROBADAS}...")
+        # Mover el correo de RESPUESTA a la carpeta APROBADAS
+        log.info(f"📁 Moviendo respuesta a carpeta {CARPETA_FACTURAS_APROBADAS}...")
         carpeta_id = obtener_id_carpeta_outlook(token, CARPETA_FACTURAS_APROBADAS)
         if not carpeta_id:
             log.error(f"❌ La carpeta '{CARPETA_FACTURAS_APROBADAS}' no existe en Outlook. Créala manualmente.")
             return
 
-        mover_correo_a_carpeta(token, correo_original["id"], carpeta_id)
-        _registrar_aprobado_humano(correo_original["id"], nombre_pdf)
-        log.info(f"✅ Factura {nombre_pdf} movida a {CARPETA_FACTURAS_APROBADAS} exitosamente")
+        mover_correo_a_carpeta(token, respuesta_id, carpeta_id)
+        _registrar_aprobado_humano(respuesta_id, nombre_pdf)
+        log.info(f"✅ Respuesta de aprobación movida a {CARPETA_FACTURAS_APROBADAS} exitosamente")
 
     except Exception as error:
         log.error(f"💥 Error al procesar la aprobación del correo '{asunto}': {error}")
@@ -1028,36 +1021,35 @@ def clasificar_respuesta_humana(correo: dict, instrucciones_clasificador: str) -
 def procesar_rechazo(token: str, correo_respuesta: dict) -> None:
     """
     Orquesta todo el proceso cuando se detecta una respuesta de rechazo humana.
-    Pasos: busca el correo original del hilo → mueve el correo a CARPETA_FACTURAS_RECHAZADAS.
-    Si la carpeta no existe, registra el error claramente y no falla el programa.
+    Mueve el correo de RESPUESTA (el que escribió el humano) a la carpeta RECHAZADAS.
+    El correo original del hilo se consulta únicamente para obtener el nombre del PDF para el log.
     Recibe:
       - token (str): token de acceso de Microsoft.
       - correo_respuesta (dict): el correo de respuesta detectado como rechazo.
     No retorna nada — todos los eventos quedan registrados en el log.
     No propaga excepciones — los errores son capturados y registrados internamente.
     """
-    asunto = correo_respuesta.get("subject", "Sin asunto")
+    asunto       = correo_respuesta.get("subject", "Sin asunto")
+    respuesta_id = correo_respuesta.get("id", "")
     log.info(f"📨 Respuesta de rechazo detectada: '{asunto}'")
     try:
+        # Buscar el original solo para obtener el nombre del PDF para el log
         correo_original = obtener_correo_original_del_hilo(
             token, correo_respuesta.get("conversationId", "")
         )
-        if not correo_original:
-            log.error("⚠️  No se encontró el correo original del hilo — se omite el rechazo")
-            return
+        adjunto_pdf = _encontrar_adjunto_pdf(correo_original) if correo_original else None
+        nombre_pdf  = adjunto_pdf.get("name", "factura.pdf") if adjunto_pdf else "factura.pdf"
 
-        adjunto_pdf  = _encontrar_adjunto_pdf(correo_original)
-        nombre_pdf   = adjunto_pdf.get("name", "factura.pdf") if adjunto_pdf else "factura.pdf"
-
-        log.info(f"📁 Moviendo a carpeta {CARPETA_FACTURAS_RECHAZADAS}...")
+        # Mover el correo de RESPUESTA a la carpeta RECHAZADAS
+        log.info(f"📁 Moviendo respuesta a carpeta {CARPETA_FACTURAS_RECHAZADAS}...")
         carpeta_id = obtener_id_carpeta_outlook(token, CARPETA_FACTURAS_RECHAZADAS)
         if not carpeta_id:
             log.error(f"❌ La carpeta '{CARPETA_FACTURAS_RECHAZADAS}' no existe en Outlook. Créala manualmente.")
             return
 
-        mover_correo_a_carpeta(token, correo_original["id"], carpeta_id)
-        _registrar_rechazado_humano(correo_original["id"], nombre_pdf)
-        log.info(f"✅ Factura {nombre_pdf} movida a {CARPETA_FACTURAS_RECHAZADAS} exitosamente")
+        mover_correo_a_carpeta(token, respuesta_id, carpeta_id)
+        _registrar_rechazado_humano(respuesta_id, nombre_pdf)
+        log.info(f"✅ Respuesta de rechazo movida a {CARPETA_FACTURAS_RECHAZADAS} exitosamente")
 
     except Exception as error:
         log.error(f"💥 Error al procesar el rechazo del correo '{asunto}': {error}")
