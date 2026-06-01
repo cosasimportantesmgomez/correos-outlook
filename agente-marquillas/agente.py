@@ -637,7 +637,7 @@ def enviar_correo_aprobado(
             "<br>"
             f"<p style=\"color: white; font-size: 1px;\">REF-AGENTE: {emisor} - {numero_factura}</p>"
             "<br>"
-            "<p><i>Correo enviado por agente de automatización Marquillas.</i></p>"
+            "<p><i>Correo enviado por DocuBotMqs.</i></p>"
         )
 
         estructura_correo = {
