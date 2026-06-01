@@ -906,6 +906,15 @@ def procesar_aprobacion(token: str, correo_respuesta: dict) -> None:
         _registrar_aprobado_humano(respuesta_id, nombre_pdf)
         log.info(f"✅ Respuesta de aprobación movida a {CARPETA_FACTURAS_APROBADAS} exitosamente")
 
+        # Mover el correo original a la carpeta del mes (JUNIO)
+        if correo_original:
+            carpeta_mes_id = obtener_id_carpeta_outlook(token, "JUNIO")
+            if not carpeta_mes_id:
+                log.error("❌ La carpeta 'JUNIO' no existe en Outlook — el correo original no se movió")
+            else:
+                mover_correo_a_carpeta(token, correo_original["id"], carpeta_mes_id)
+                log.info("📁 Correo original movido a carpeta JUNIO")
+
     except Exception as error:
         log.error(f"💥 Error al procesar la aprobación del correo '{asunto}': {error}")
 
@@ -1050,6 +1059,15 @@ def procesar_rechazo(token: str, correo_respuesta: dict) -> None:
         mover_correo_a_carpeta(token, respuesta_id, carpeta_id)
         _registrar_rechazado_humano(respuesta_id, nombre_pdf)
         log.info(f"✅ Respuesta de rechazo movida a {CARPETA_FACTURAS_RECHAZADAS} exitosamente")
+
+        # Mover el correo original a la carpeta del mes (JUNIO)
+        if correo_original:
+            carpeta_mes_id = obtener_id_carpeta_outlook(token, "JUNIO")
+            if not carpeta_mes_id:
+                log.error("❌ La carpeta 'JUNIO' no existe en Outlook — el correo original no se movió")
+            else:
+                mover_correo_a_carpeta(token, correo_original["id"], carpeta_mes_id)
+                log.info("📁 Correo original movido a carpeta JUNIO")
 
     except Exception as error:
         log.error(f"💥 Error al procesar el rechazo del correo '{asunto}': {error}")
