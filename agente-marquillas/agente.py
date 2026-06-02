@@ -888,32 +888,33 @@ def procesar_aprobacion(token: str, correo_respuesta: dict) -> None:
     respuesta_id = correo_respuesta.get("id", "")
     log.info(f"📨 Respuesta de aprobación detectada: '{asunto}'")
     try:
-        # Buscar el original solo para obtener el nombre del PDF para el log
-        correo_original = obtener_correo_original_del_hilo(
-            token, correo_respuesta.get("conversationId", "")
-        )
-        adjunto_pdf = _encontrar_adjunto_pdf(correo_original) if correo_original else None
-        nombre_pdf  = adjunto_pdf.get("name", "factura.pdf") if adjunto_pdf else "factura.pdf"
-
-        # Mover el correo de RESPUESTA a la carpeta APROBADAS
-        log.info(f"📁 Moviendo respuesta a carpeta {CARPETA_FACTURAS_APROBADAS}...")
         carpeta_id = obtener_id_carpeta_outlook(token, CARPETA_FACTURAS_APROBADAS)
         if not carpeta_id:
             log.error(f"❌ La carpeta '{CARPETA_FACTURAS_APROBADAS}' no existe en Outlook. Créala manualmente.")
             return
 
+        # 1. Mover el correo de RESPUESTA a la carpeta APROBADAS
+        log.info(f"📁 Moviendo respuesta a carpeta {CARPETA_FACTURAS_APROBADAS}...")
         mover_correo_a_carpeta(token, respuesta_id, carpeta_id)
-        _registrar_aprobado_humano(respuesta_id, nombre_pdf)
         log.info(f"✅ Respuesta de aprobación movida a {CARPETA_FACTURAS_APROBADAS} exitosamente")
 
-        # Mover el correo original a la carpeta del mes (JUNIO)
+        # 2. Obtener el correo original para el nombre del PDF en el log
+        correo_original = obtener_correo_original_del_hilo(
+            token, correo_respuesta.get("conversationId", "")
+        )
+        adjunto_pdf = _encontrar_adjunto_pdf(correo_original) if correo_original else None
+        nombre_pdf  = adjunto_pdf.get("name", "factura.pdf") if adjunto_pdf else "factura.pdf"
+        _registrar_aprobado_humano(respuesta_id, nombre_pdf)
+
+        # 3. Mover el correo original a JUNIO y marcarlo como leído
         if correo_original:
             carpeta_mes_id = obtener_id_carpeta_outlook(token, "JUNIO")
             if not carpeta_mes_id:
                 log.error("❌ La carpeta 'JUNIO' no existe en Outlook — el correo original no se movió")
             else:
+                marcar_correo_como_leido(token, correo_original["id"])
                 mover_correo_a_carpeta(token, correo_original["id"], carpeta_mes_id)
-                log.info("📁 Correo original movido a carpeta JUNIO")
+                log.info("📁 Correo original marcado como leído y movido a carpeta JUNIO")
 
     except Exception as error:
         log.error(f"💥 Error al procesar la aprobación del correo '{asunto}': {error}")
@@ -1042,32 +1043,33 @@ def procesar_rechazo(token: str, correo_respuesta: dict) -> None:
     respuesta_id = correo_respuesta.get("id", "")
     log.info(f"📨 Respuesta de rechazo detectada: '{asunto}'")
     try:
-        # Buscar el original solo para obtener el nombre del PDF para el log
-        correo_original = obtener_correo_original_del_hilo(
-            token, correo_respuesta.get("conversationId", "")
-        )
-        adjunto_pdf = _encontrar_adjunto_pdf(correo_original) if correo_original else None
-        nombre_pdf  = adjunto_pdf.get("name", "factura.pdf") if adjunto_pdf else "factura.pdf"
-
-        # Mover el correo de RESPUESTA a la carpeta RECHAZADAS
-        log.info(f"📁 Moviendo respuesta a carpeta {CARPETA_FACTURAS_RECHAZADAS}...")
         carpeta_id = obtener_id_carpeta_outlook(token, CARPETA_FACTURAS_RECHAZADAS)
         if not carpeta_id:
             log.error(f"❌ La carpeta '{CARPETA_FACTURAS_RECHAZADAS}' no existe en Outlook. Créala manualmente.")
             return
 
+        # 1. Mover el correo de RESPUESTA a la carpeta RECHAZADAS
+        log.info(f"📁 Moviendo respuesta a carpeta {CARPETA_FACTURAS_RECHAZADAS}...")
         mover_correo_a_carpeta(token, respuesta_id, carpeta_id)
-        _registrar_rechazado_humano(respuesta_id, nombre_pdf)
         log.info(f"✅ Respuesta de rechazo movida a {CARPETA_FACTURAS_RECHAZADAS} exitosamente")
 
-        # Mover el correo original a la carpeta del mes (JUNIO)
+        # 2. Obtener el correo original para el nombre del PDF en el log
+        correo_original = obtener_correo_original_del_hilo(
+            token, correo_respuesta.get("conversationId", "")
+        )
+        adjunto_pdf = _encontrar_adjunto_pdf(correo_original) if correo_original else None
+        nombre_pdf  = adjunto_pdf.get("name", "factura.pdf") if adjunto_pdf else "factura.pdf"
+        _registrar_rechazado_humano(respuesta_id, nombre_pdf)
+
+        # 3. Mover el correo original a JUNIO y marcarlo como leído
         if correo_original:
             carpeta_mes_id = obtener_id_carpeta_outlook(token, "JUNIO")
             if not carpeta_mes_id:
                 log.error("❌ La carpeta 'JUNIO' no existe en Outlook — el correo original no se movió")
             else:
+                marcar_correo_como_leido(token, correo_original["id"])
                 mover_correo_a_carpeta(token, correo_original["id"], carpeta_mes_id)
-                log.info("📁 Correo original movido a carpeta JUNIO")
+                log.info("📁 Correo original marcado como leído y movido a carpeta JUNIO")
 
     except Exception as error:
         log.error(f"💥 Error al procesar el rechazo del correo '{asunto}': {error}")
@@ -1097,10 +1099,8 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str) -> None:
             clasificacion = clasificar_respuesta_humana(correo, instrucciones_clasificador)
             if clasificacion == "APROBADO":
                 procesar_aprobacion(token, correo)
-                marcar_correo_como_leido(token, correo_id)
             elif clasificacion == "RECHAZADO":
                 procesar_rechazo(token, correo)
-                marcar_correo_como_leido(token, correo_id)
             else:
                 log.info(f"⏭️  Respuesta clasificada como NINGUNO — se ignora: '{asunto}'")
             return
