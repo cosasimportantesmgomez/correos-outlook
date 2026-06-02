@@ -4,7 +4,7 @@
 AGENTE MARQUILLAS S.A.S — Verificador automático de facturas
 =============================================================
 Conecta con el correo corporativo de Outlook via Microsoft Graph API,
-descarga ZIPs adjuntos, extrae el PDF interno, lo verifica con Claude AI
+descarga ZIPs adjuntos, extrae el PDF interno, lo verifica con OpenAI
 y reenvía el PDF al destinatario configurado si la factura es aprobada.
 
 Ejecutar con: python agente.py
@@ -26,7 +26,7 @@ import fitz           # PyMuPDF — extrae texto de PDFs
 import msal           # Microsoft Authentication Library — autenticación Azure
 import requests       # Llamadas HTTP a Microsoft Graph API
 import schedule       # Planificador de tareas periódicas
-from anthropic import Anthropic   # Cliente oficial de Claude AI
+from openai import OpenAI          # Cliente oficial de OpenAI
 from dotenv import load_dotenv    # Carga variables desde el archivo .env
 
 # Cargar las variables de entorno desde el archivo .env antes de cualquier otra cosa
@@ -37,7 +37,7 @@ load_dotenv()
 # ═══════════════════════════════════════════════════════════════
 # El resto del código usa estas variables directamente, nunca os.getenv() interno.
 
-ANTHROPIC_API_KEY   = os.getenv("ANTHROPIC_API_KEY", "")
+OPENAI_API_KEY      = os.getenv("OPENAI_API_KEY", "")
 AZURE_CLIENT_ID     = os.getenv("AZURE_CLIENT_ID", "")
 AZURE_CLIENT_SECRET = os.getenv("AZURE_CLIENT_SECRET", "")
 AZURE_TENANT_ID     = os.getenv("AZURE_TENANT_ID", "")
@@ -57,8 +57,8 @@ ARCHIVO_PROVEEDORES = "proveedores.json"
 # ═══ CONSTANTES ═══
 NIT_ESPERADO          = "890900314"
 RAZON_SOCIAL_ESPERADA = "MARQUILLAS S.A.S"
-MODELO_CLAUDE         = "claude-opus-4-5"
-MAXIMO_CARACTERES_PDF = 4000          # Límite para no exceder tokens de Claude
+MODELO_OPENAI         = "gpt-4o"
+MAXIMO_CARACTERES_PDF = 4000          # Límite para no exceder tokens del modelo
 SCOPES_MICROSOFT      = ["https://graph.microsoft.com/.default"]
 URL_GRAPH_API         = "https://graph.microsoft.com/v1.0"
 ARCHIVO_INSTRUCCIONES = "agente.md"
@@ -484,20 +484,20 @@ def leer_texto_del_pdf(bytes_pdf: bytes) -> str:
 
 def verificar_documento_con_claude(texto_pdf: str, instrucciones: str) -> dict:
     """
-    Envía el texto del PDF a Claude AI para verificar si corresponde a Marquillas S.A.S.
-    Claude analiza el texto buscando el NIT y la razón social según las reglas del agente.md.
+    Envía el texto del PDF a OpenAI para verificar si corresponde a Marquillas S.A.S.
+    GPT-4o analiza el texto buscando el NIT y la razón social según las reglas del agente.md.
     Espera una respuesta en formato JSON puro con los campos: nit_encontrado,
     razon_social_encontrada, aprobado y motivo.
     Recibe:
       - texto_pdf (str): texto extraído del PDF con leer_texto_del_pdf().
       - instrucciones (str): contenido completo del archivo agente.md.
     Retorna: diccionario Python con el resultado de la verificación.
-    Lanza: json.JSONDecodeError si Claude no responde con JSON válido.
-    Lanza: Exception si hay error de conexión con la API de Anthropic.
+    Lanza: json.JSONDecodeError si OpenAI no responde con JSON válido.
+    Lanza: Exception si hay error de conexión con la API de OpenAI.
     """
     try:
-        log.info("🤖 Consultando a Claude...")
-        cliente_anthropic = Anthropic(api_key=ANTHROPIC_API_KEY)
+        log.info("🤖 Consultando a OpenAI...")
+        cliente_openai = OpenAI(api_key=OPENAI_API_KEY)
 
         contenido_usuario = (
             "Analiza el siguiente texto extraído de un PDF de factura "
@@ -505,16 +505,18 @@ def verificar_documento_con_claude(texto_pdf: str, instrucciones: str) -> dict:
             f"TEXTO DEL PDF:\n{texto_pdf}"
         )
 
-        respuesta_claude = cliente_anthropic.messages.create(
-            model=MODELO_CLAUDE,
+        respuesta = cliente_openai.chat.completions.create(
+            model=MODELO_OPENAI,
             max_tokens=500,
-            system=instrucciones,
-            messages=[{"role": "user", "content": contenido_usuario}]
+            messages=[
+                {"role": "system", "content": instrucciones},
+                {"role": "user",   "content": contenido_usuario},
+            ]
         )
 
-        texto_respuesta = respuesta_claude.content[0].text.strip()
+        texto_respuesta = respuesta.choices[0].message.content.strip()
 
-        # Limpiar bloques de código Markdown que Claude podría agregar por error
+        # Limpiar bloques de código Markdown que el modelo podría agregar por error
         if "```" in texto_respuesta:
             partes = texto_respuesta.split("```")
             texto_respuesta = partes[1] if len(partes) > 1 else texto_respuesta
@@ -525,10 +527,10 @@ def verificar_documento_con_claude(texto_pdf: str, instrucciones: str) -> dict:
         return resultado_json
 
     except json.JSONDecodeError:
-        log.error("⚠️  Claude no respondió con JSON válido — se omitirá este correo")
+        log.error("⚠️  OpenAI no respondió con JSON válido — se omitirá este correo")
         raise
     except Exception as error:
-        log.error(f"💥 Error al consultar a Claude AI: {error}")
+        log.error(f"💥 Error al consultar a OpenAI: {error}")
         raise
 
 
@@ -569,7 +571,7 @@ def convertir_pdf_a_imagenes(bytes_pdf: bytes) -> list:
 
 def verificar_pdf_con_imagenes(bytes_pdf: bytes, instrucciones: str) -> dict:
     """
-    Verifica un PDF enviando imágenes de sus páginas a Claude
+    Verifica un PDF enviando imágenes de sus páginas a OpenAI
     en vez del texto extraído.
 
     Solo se llama cuando verificar_documento_con_claude() no encontró
@@ -583,36 +585,37 @@ def verificar_pdf_con_imagenes(bytes_pdf: bytes, instrucciones: str) -> dict:
     verificar_documento_con_claude()
     """
     try:
-        log.info("🤖 Consultando a Claude con imágenes del PDF...")
-        imagenes_b64      = convertir_pdf_a_imagenes(bytes_pdf)
-        cliente_anthropic = Anthropic(api_key=ANTHROPIC_API_KEY)
+        log.info("🤖 Consultando a OpenAI con imágenes del PDF...")
+        imagenes_b64   = convertir_pdf_a_imagenes(bytes_pdf)
+        cliente_openai = OpenAI(api_key=OPENAI_API_KEY)
 
-        contenido_usuario = [
-            {
-                "type": "image",
-                "source": {
-                    "type":       "base64",
-                    "media_type": "image/png",
-                    "data":       imagen_b64,
-                },
-            }
-            for imagen_b64 in imagenes_b64
-        ]
-        contenido_usuario.append({
-            "type": "text",
-            "text": "Analiza estas imágenes del PDF de factura y extrae la información solicitada.",
-        })
-
-        respuesta_claude = cliente_anthropic.messages.create(
-            model=MODELO_CLAUDE,
+        respuesta = cliente_openai.chat.completions.create(
+            model=MODELO_OPENAI,
             max_tokens=500,
-            system=instrucciones,
-            messages=[{"role": "user", "content": contenido_usuario}]
+            messages=[
+                {"role": "system", "content": instrucciones},
+                {
+                    "role": "user",
+                    "content": [
+                        *[
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:image/png;base64,{imagen_b64}"},
+                            }
+                            for imagen_b64 in imagenes_b64
+                        ],
+                        {
+                            "type": "text",
+                            "text": "Analiza estas imágenes del PDF de factura y extrae la información solicitada.",
+                        },
+                    ],
+                },
+            ]
         )
 
-        texto_respuesta = respuesta_claude.content[0].text.strip()
+        texto_respuesta = respuesta.choices[0].message.content.strip()
 
-        # Limpiar bloques de código Markdown que Claude podría agregar por error
+        # Limpiar bloques de código Markdown que el modelo podría agregar por error
         if "```" in texto_respuesta:
             partes = texto_respuesta.split("```")
             texto_respuesta = partes[1] if len(partes) > 1 else texto_respuesta
@@ -622,7 +625,7 @@ def verificar_pdf_con_imagenes(bytes_pdf: bytes, instrucciones: str) -> dict:
         return json.loads(texto_respuesta)
 
     except json.JSONDecodeError:
-        log.error("⚠️  Claude (visión) no respondió con JSON válido")
+        log.error("⚠️  OpenAI (visión) no respondió con JSON válido")
         raise
     except Exception as error:
         log.error(f"💥 Error al verificar PDF con imágenes: {error}")
@@ -999,14 +1002,14 @@ def obtener_correos_aprobacion(token: str) -> list:
 
 def clasificar_con_claude(texto: str, instrucciones_clasificador: str) -> str:
     """
-    Clasifica el cuerpo de un correo de respuesta humana usando Claude Haiku.
-    Antes de enviar a Claude, recorta el historial citado de Outlook para que el modelo
+    Clasifica el cuerpo de un correo de respuesta humana usando GPT-4o-mini.
+    Antes de enviar a OpenAI, recorta el historial citado de Outlook para que el modelo
     analice únicamente el texto nuevo escrito por el humano.
     Recibe:
       - texto (str): cuerpo completo del correo (puede incluir historial de Outlook).
       - instrucciones_clasificador (str): contenido de clasificador.md.
-    Retorna: "APROBADO", "RECHAZADO" o "NINGUNO" (según responda Claude).
-    Retorna "NINGUNO" si Claude responde con algo inesperado o hay un error.
+    Retorna: "APROBADO", "RECHAZADO" o "NINGUNO" (según responda el modelo).
+    Retorna "NINGUNO" si el modelo responde con algo inesperado o hay un error.
     """
     # Cortar el historial citado de Outlook — solo analizar lo que escribió el humano
     marcadores = ["De:", "From:", "Enviado:", "Sent:", "________________________________"]
@@ -1021,20 +1024,22 @@ def clasificar_con_claude(texto: str, instrucciones_clasificador: str) -> str:
         return "NINGUNO"
 
     try:
-        cliente_anthropic = Anthropic(api_key=ANTHROPIC_API_KEY)
-        respuesta_claude  = cliente_anthropic.messages.create(
-            model="claude-haiku-4-5-20251001",
+        cliente_openai   = OpenAI(api_key=OPENAI_API_KEY)
+        respuesta        = cliente_openai.chat.completions.create(
+            model="gpt-4o-mini",
             max_tokens=10,
-            system=instrucciones_clasificador,
-            messages=[{"role": "user", "content": texto}]
+            messages=[
+                {"role": "system", "content": instrucciones_clasificador},
+                {"role": "user",   "content": texto},
+            ]
         )
-        resultado = respuesta_claude.content[0].text.strip().upper()
+        resultado = respuesta.choices[0].message.content.strip().upper()
         if resultado in ("APROBADO", "RECHAZADO", "NINGUNO"):
             return resultado
-        log.error(f"⚠️  Clasificador Claude retornó valor inesperado: '{resultado}' — se trata como NINGUNO")
+        log.error(f"⚠️  Clasificador OpenAI retornó valor inesperado: '{resultado}' — se trata como NINGUNO")
         return "NINGUNO"
     except Exception as error:
-        log.error(f"💥 Error al consultar clasificador Claude: {error}")
+        log.error(f"💥 Error al consultar clasificador OpenAI: {error}")
         return "NINGUNO"
 
 
@@ -1134,6 +1139,7 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str) -> None:
         adjunto_zip = encontrar_adjunto_zip(correo)
         if adjunto_zip:
             log.info(f"📧 Procesando: '{asunto}'")
+            print(f"📧 Procesando correo del proveedor: {asunto.split(';')[1].strip() if ';' in asunto else asunto}")
 
             # Verificar proveedor desde el asunto antes de descargar ZIP o llamar a Claude
             nit_del_asunto = extraer_nit_del_asunto(asunto)
@@ -1145,6 +1151,7 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str) -> None:
                     nombre_asunto = partes_asunto[1] if len(partes_asunto) > 1 else "N/A"
                     log.warning(f"⚠️  NIT {nit_del_asunto} no encontrado en proveedores.json — se omite sin llamar a Claude")
                     _registrar_proveedor_no_encontrado(nit_del_asunto, nombre_asunto)
+                    print(f"⚠️  Proveedor no encontrado en listado — se omite: {asunto.split(';')[1].strip() if ';' in asunto else asunto}")
                     return
 
             bytes_zip             = descargar_adjunto(token, correo_id, adjunto_zip.get("id", ""))
@@ -1156,6 +1163,7 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str) -> None:
             texto_pdf = leer_texto_del_pdf(bytes_pdf)
 
             if es_nota_credito(texto_pdf):
+                print(f"🔕 Nota crédito detectada — ignorada: {asunto.split(';')[1].strip() if ';' in asunto else asunto}")
                 return  # Nota crédito — ignorar sin log, sin Claude, sin marcar como leído
 
             resultado = verificar_documento_con_claude(texto_pdf, instrucciones)
@@ -1172,6 +1180,7 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str) -> None:
 
             if not resultado.get("aprobado"):
                 _registrar_rechazado_agente(correo_id, asunto, resultado)
+                print(f"❌ Factura rechazada por el agente: {asunto.split(';')[1].strip() if ';' in asunto else asunto}")
                 return  # No marcar como leído — factura rechazada por Claude
 
             # ── Fase 4: renombrar el PDF con proveedor y número de factura ──
@@ -1189,11 +1198,13 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str) -> None:
             if lista_almacen is None:
                 log.warning(f"⚠️  NIT {nit_limpio} no encontrado en proveedores.json — no se envía correo")
                 _registrar_proveedor_no_encontrado(nit_limpio, resultado.get("razon_social_emisor", "N/A"))
+                print(f"⚠️  Proveedor no encontrado en listado tras verificación — se omite: {asunto.split(';')[1].strip() if ';' in asunto else asunto}")
                 return  # No marcar como leído — proveedor no está en el listado
 
             _registrar_aprobado_agente(correo_id, asunto, resultado, nit_limpio, lista_almacen)
             destinatarios = determinar_destinatarios(lista_almacen)
             enviar_correo_aprobado(token, bytes_pdf, nuevo_nombre, resultado, destinatarios)
+            print(f"✅ Correo enviado exitosamente: {asunto.split(';')[1].strip() if ';' in asunto else asunto}")
             # Marcar como leído solo después de enviar exitosamente
             marcar_correo_como_leido(token, correo_id)
             return
@@ -1427,7 +1438,7 @@ def _verificar_configuracion() -> None:
     Lanza: SystemExit con código 1 si falta alguna variable crítica (el agente no puede operar).
     """
     variables_requeridas = {
-        "ANTHROPIC_API_KEY":        ANTHROPIC_API_KEY,
+        "OPENAI_API_KEY":            OPENAI_API_KEY,
         "AZURE_CLIENT_ID":          AZURE_CLIENT_ID,
         "AZURE_CLIENT_SECRET":      AZURE_CLIENT_SECRET,
         "AZURE_TENANT_ID":          AZURE_TENANT_ID,
