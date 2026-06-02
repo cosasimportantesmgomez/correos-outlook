@@ -15,6 +15,7 @@ import io
 import json
 import base64
 import logging
+import unicodedata
 import zipfile
 import time
 from datetime import datetime
@@ -389,6 +390,30 @@ def extraer_pdf_del_zip(bytes_zip: bytes) -> tuple:
     except Exception as error:
         log.error(f"💥 Error al extraer el PDF del ZIP: {error}")
         raise
+
+
+def es_nota_credito(texto_pdf: str) -> bool:
+    """
+    Determina si un PDF es una nota crédito buscando términos específicos en su texto.
+    Las notas crédito deben ignorarse completamente — no se procesan, no se envían,
+    no se marcan como leídas y no se registran en ningún log.
+    La búsqueda es insensible a mayúsculas, minúsculas y tildes.
+    Recibe: texto_pdf (str) — texto extraído del PDF con leer_texto_del_pdf().
+    Retorna: True si el documento es una nota crédito.
+    Retorna: False si es una factura normal que debe procesarse.
+    """
+    def _normalizar(texto: str) -> str:
+        return unicodedata.normalize("NFD", texto).encode("ascii", "ignore").decode("utf-8").lower()
+
+    texto_normalizado = _normalizar(texto_pdf)
+    terminos = [
+        "nota credito",
+        "nota crédito",
+        "nota de credito",
+        "nota de crédito",
+        "nota credit",
+    ]
+    return any(_normalizar(t) in texto_normalizado for t in terminos)
 
 
 def leer_texto_del_pdf(bytes_pdf: bytes) -> str:
@@ -1109,6 +1134,19 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str) -> None:
         adjunto_zip = encontrar_adjunto_zip(correo)
         if adjunto_zip:
             log.info(f"📧 Procesando: '{asunto}'")
+
+            # Verificar proveedor desde el asunto antes de descargar ZIP o llamar a Claude
+            nit_del_asunto = extraer_nit_del_asunto(asunto)
+            if nit_del_asunto:
+                proveedores = cargar_proveedores()
+                _, lista_almacen_previo = buscar_proveedor_en_lista(nit_del_asunto, proveedores)
+                if lista_almacen_previo is None:
+                    partes_asunto = asunto.split(";")
+                    nombre_asunto = partes_asunto[1] if len(partes_asunto) > 1 else "N/A"
+                    log.warning(f"⚠️  NIT {nit_del_asunto} no encontrado en proveedores.json — se omite sin llamar a Claude")
+                    _registrar_proveedor_no_encontrado(nit_del_asunto, nombre_asunto)
+                    return
+
             bytes_zip             = descargar_adjunto(token, correo_id, adjunto_zip.get("id", ""))
             nombre_pdf, bytes_pdf = extraer_pdf_del_zip(bytes_zip)
             if not bytes_pdf:
@@ -1116,6 +1154,10 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str) -> None:
                 return  # No marcar como leído — ZIP sin PDF no es un éxito
 
             texto_pdf = leer_texto_del_pdf(bytes_pdf)
+
+            if es_nota_credito(texto_pdf):
+                return  # Nota crédito — ignorar sin log, sin Claude, sin marcar como leído
+
             resultado = verificar_documento_con_claude(texto_pdf, instrucciones)
 
             # Respaldo de visión cuando el texto no contiene datos del emisor
@@ -1185,6 +1227,21 @@ def cargar_proveedores() -> dict:
     except Exception as error:
         log.error(f"💥 Error al cargar {ARCHIVO_PROVEEDORES}: {error}")
         return {}
+
+
+def extraer_nit_del_asunto(asunto: str) -> str:
+    """
+    Extrae el NIT del proveedor desde el asunto del correo.
+    El asunto siempre tiene el formato:
+    NIT;NOMBRE;NUMERO_FACTURA;TIPO;NOMBRE_CORTO
+    El NIT es el primer campo antes del primer punto y coma.
+    Recibe: asunto (str) — asunto completo del correo.
+    Retorna: string con el NIT limpio usando limpiar_nit().
+    Retorna string vacío si el asunto no tiene el formato esperado.
+    """
+    if ";" not in asunto:
+        return ""
+    return limpiar_nit(asunto.split(";")[0])
 
 
 def limpiar_nit(nit: str) -> str:
