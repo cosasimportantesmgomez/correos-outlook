@@ -31,8 +31,17 @@ identificar cuál es el emisor y cuál es el receptor de la factura.
 ## Criterio de aprobación
 El documento es APROBADO únicamente si se cumplen las dos
 condiciones al mismo tiempo:
-- El NIT 890900314 aparece en el documento asociado a Marquillas S.A.S como receptor
-- La razón social contiene MARQUILLAS S.A.S como receptor
+
+- El NIT del receptor, ignorando puntos, guiones y dígito de
+  verificación, corresponde a 890900314. Por ejemplo:
+  890900314, 890.900.314, 890900314-9, 890.900.314-9
+  son todos el mismo NIT y deben considerarse correctos.
+
+- La razón social del receptor contiene la palabra MARQUILLAS
+  y alguna variante de SAS. Son válidas:
+  MARQUILLAS S.A.S, MARQUILLAS SAS, MARQUILLAS S.A.S.
+  solo y unicamente en estas variantes cualquier otra 
+  deber ser rechazada
 
 ## Formato de respuesta
 Responde SIEMPRE en este formato JSON exacto, sin ningún texto antes ni después:
