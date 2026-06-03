@@ -13,6 +13,7 @@ Ejecutar con: python agente.py
 import os
 import io
 import json
+import re
 import base64
 import logging
 import unicodedata
@@ -390,6 +391,44 @@ def extraer_pdf_del_zip(bytes_zip: bytes) -> tuple:
     except Exception as error:
         log.error(f"💥 Error al extraer el PDF del ZIP: {error}")
         raise
+
+
+def extraer_numero_factura_del_xml(bytes_zip: bytes) -> str:
+    """
+    Extrae el número de factura directamente del archivo XML dentro del ZIP.
+    Es más confiable que pedirle a OpenAI que lo identifique en el PDF.
+
+    El XML tiene como raíz <AttachedDocument>. El número de la factura está
+    en <cbc:ParentDocumentID> hijo directo del raíz, con namespace:
+    urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2
+
+    Recibe: bytes_zip (bytes) — contenido binario del ZIP descargado del correo.
+    Retorna: string con el número de factura limpio sin espacios.
+    Retorna string vacío si no encuentra el XML o el campo esperado.
+    No lanza excepciones — ante cualquier error retorna string vacío.
+    """
+    import xml.etree.ElementTree as ET
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(bytes_zip), "r") as archivo_zip:
+            nombre_xml = next(
+                (n for n in archivo_zip.namelist() if n.lower().endswith(".xml")),
+                None,
+            )
+            if not nombre_xml:
+                return ""
+            contenido_xml = archivo_zip.read(nombre_xml)
+
+        raiz = ET.fromstring(contenido_xml)
+        etiqueta = "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}ParentDocumentID"
+        elemento = raiz.find(etiqueta)
+        if elemento is not None and elemento.text:
+            return elemento.text.strip()
+
+        return ""
+
+    except Exception:
+        return ""
 
 
 def es_nota_credito(texto_pdf: str) -> bool:
@@ -1143,6 +1182,7 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str) -> None:
 
             # Verificar proveedor desde el asunto antes de descargar ZIP o llamar a Claude
             nit_del_asunto = extraer_nit_del_asunto(asunto)
+            print(f"{nit_del_asunto} NIT extraído del asunto para verificación previa")
             if nit_del_asunto:
                 proveedores = cargar_proveedores()
                 _, lista_almacen_previo = buscar_proveedor_en_lista(nit_del_asunto, proveedores)
@@ -1151,7 +1191,7 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str) -> None:
                     nombre_asunto = partes_asunto[1] if len(partes_asunto) > 1 else "N/A"
                     log.warning(f"⚠️  NIT {nit_del_asunto} no encontrado en proveedores.json — se omite sin llamar a Claude")
                     _registrar_proveedor_no_encontrado(nit_del_asunto, nombre_asunto)
-                    print(f"⚠️  Proveedor no encontrado en listado — se omite: {asunto.split(';')[1].strip() if ';' in asunto else asunto}")
+                    print(f"⚠️  {nit_del_asunto} Proveedor no encontrado en listado — se omite: {asunto.split(';')[1].strip() if ';' in asunto else asunto}")
                     return
 
             bytes_zip             = descargar_adjunto(token, correo_id, adjunto_zip.get("id", ""))
@@ -1166,7 +1206,17 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str) -> None:
                 print(f"🔕 Nota crédito detectada — ignorada: {asunto.split(';')[1].strip() if ';' in asunto else asunto}")
                 return  # Nota crédito — ignorar sin log, sin Claude, sin marcar como leído
 
+            # Extraer número de factura del XML — más confiable que OpenAI
+            numero_factura_xml = extraer_numero_factura_del_xml(bytes_zip)
+
             resultado = verificar_documento_con_claude(texto_pdf, instrucciones)
+
+            # Si el XML tenía el número de factura, usarlo en vez del de OpenAI
+            if numero_factura_xml:
+                resultado["numero_factura"] = numero_factura_xml
+
+            if (nit_del_asunto == "890940567"): # SI ES PAPELCARD
+                resultado["nit_emisor"] = nit_del_asunto
 
             # Respaldo de visión cuando el texto no contiene datos del emisor
             if (resultado.get("nit_emisor") == "NO ENCONTRADO"
@@ -1183,13 +1233,6 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str) -> None:
                 print(f"❌ Factura rechazada por el agente: {asunto.split(';')[1].strip() if ';' in asunto else asunto}")
                 return  # No marcar como leído — factura rechazada por Claude
 
-            # ── Fase 4: renombrar el PDF con proveedor y número de factura ──
-            nuevo_nombre, bytes_pdf = renombrar_pdf(
-                resultado.get("razon_social_emisor", ""),
-                resultado.get("numero_factura", ""),
-                bytes_pdf,
-            )
-
             # ── Fase 3: buscar el proveedor y determinar destinatarios ──
             nit_limpio                      = limpiar_nit(resultado.get("nit_emisor", ""))
             proveedores                     = cargar_proveedores()
@@ -1198,8 +1241,18 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str) -> None:
             if lista_almacen is None:
                 log.warning(f"⚠️  NIT {nit_limpio} no encontrado en proveedores.json — no se envía correo")
                 _registrar_proveedor_no_encontrado(nit_limpio, resultado.get("razon_social_emisor", "N/A"))
-                print(f"⚠️  Proveedor no encontrado en listado tras verificación — se omite: {asunto.split(';')[1].strip() if ';' in asunto else asunto}")
+                print(f"⚠️  {nit_limpio} Proveedor no encontrado en listado tras verificación — se omite: {asunto.split(';')[1].strip() if ';' in asunto else asunto}")
                 return  # No marcar como leído — proveedor no está en el listado
+
+            # Usar el nombre oficial del JSON en vez del que extrajo OpenAI
+            resultado["razon_social_emisor"] = nombre_proveedor
+
+            # ── Fase 4: renombrar el PDF con el nombre oficial del proveedor ──
+            nuevo_nombre, bytes_pdf = renombrar_pdf(
+                resultado.get("razon_social_emisor", ""),
+                resultado.get("numero_factura", ""),
+                bytes_pdf,
+            )
 
             _registrar_aprobado_agente(correo_id, asunto, resultado, nit_limpio, lista_almacen)
             destinatarios = determinar_destinatarios(lista_almacen)
@@ -1242,17 +1295,23 @@ def cargar_proveedores() -> dict:
 
 def extraer_nit_del_asunto(asunto: str) -> str:
     """
-    Extrae el NIT del proveedor desde el asunto del correo.
-    El asunto siempre tiene el formato:
-    NIT;NOMBRE;NUMERO_FACTURA;TIPO;NOMBRE_CORTO
-    El NIT es el primer campo antes del primer punto y coma.
-    Recibe: asunto (str) — asunto completo del correo.
-    Retorna: string con el NIT limpio usando limpiar_nit().
-    Retorna string vacío si el asunto no tiene el formato esperado.
+    Extrae el NIT del proveedor desde el asunto.
+
+    Formatos soportados:
+    890940567;PAPELCARD...
+    RV: 890940567;PAPELCARD...
+    RE: RV: 890940567;PAPELCARD...
     """
+
     if ";" not in asunto:
         return ""
-    return limpiar_nit(asunto.split(";")[0])
+
+    primer_campo = asunto.split(";")[0].strip()
+
+    # Conserva únicamente números
+    nit = re.sub(r"\D", "", primer_campo)
+
+    return limpiar_nit(nit)
 
 
 def limpiar_nit(nit: str) -> str:
