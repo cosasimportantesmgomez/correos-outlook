@@ -78,6 +78,15 @@ CARPETA_FACTURAS_APROBADAS  = os.getenv("CARPETA_APROBADAS",  "APROBADAS")
 CARPETA_FACTURAS_RECHAZADAS = os.getenv("CARPETA_RECHAZADAS", "RECHAZADAS")
 ARCHIVO_CLASIFICADOR = "clasificador.md"
 
+NITS_COPIA_NATALIA = {
+    "52014675",
+    "890940567",
+    "900770336",
+    "900077818",
+    "890938664",
+    "900420442",
+}
+
 
 # ═══════════════════════════════════════════════════════════════
 # CONFIGURACIÓN DEL SISTEMA DE LOGS
@@ -1255,7 +1264,7 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str) -> None:
             )
 
             _registrar_aprobado_agente(correo_id, asunto, resultado, nit_limpio, lista_almacen)
-            destinatarios = determinar_destinatarios(lista_almacen)
+            destinatarios = determinar_destinatarios(lista_almacen, nit_limpio)
             enviar_correo_aprobado(token, bytes_pdf, nuevo_nombre, resultado, destinatarios)
             print(f"✅ Correo enviado exitosamente: {asunto.split(';')[1].strip() if ';' in asunto else asunto}")
             # Marcar como leído solo después de enviar exitosamente
@@ -1373,10 +1382,13 @@ def buscar_proveedor_en_lista(nit_proveedor: str, proveedores: dict) -> tuple:
     return None, None
 
 
-def determinar_destinatarios(lista_almacen: str) -> dict:
+def determinar_destinatarios(lista_almacen: str, nit_proveedor: str = "") -> dict:
     """
     Determina los correos destino según el almacén al que pertenece el proveedor.
-    Recibe: lista_almacen (str) — nombre de la lista retornado por buscar_proveedor_en_lista().
+    Recibe:
+      - lista_almacen (str) — nombre de la lista retornado por buscar_proveedor_en_lista().
+      - nit_proveedor (str) — NIT limpio del proveedor; si está en NITS_COPIA_NATALIA
+        se agrega natalia.vargas@marquillas.com.co en copia.
     Retorna diccionario con claves "principales" y "copia":
       - almacenSabaneta         → principales: [EMAIL_SABANETA_PRINCIPAL], copia: [EMAIL_SABANETA_COPIA]
       - almacenRionegro         → principales: [EMAIL_RIONEGRO_PRINCIPAL], copia: [EMAIL_RIONEGRO_COPIA]
@@ -1384,14 +1396,16 @@ def determinar_destinatarios(lista_almacen: str) -> dict:
                                    copia:       [EMAIL_SABANETA_COPIA, EMAIL_RIONEGRO_COPIA]
     Retorna dict vacío si el valor recibido no coincide con ninguna de las tres listas.
     """
+    copia_natalia = ["natalia.vargas@marquillas.com.co"] if nit_proveedor in NITS_COPIA_NATALIA else []
+
     if lista_almacen == "almacenSabaneta":
-        return {"principales": [EMAIL_SABANETA_PRINCIPAL], "copia": [EMAIL_SABANETA_COPIA] + EMAIL_COPIA_SIEMPRE}
+        return {"principales": [EMAIL_SABANETA_PRINCIPAL], "copia": [EMAIL_SABANETA_COPIA] + EMAIL_COPIA_SIEMPRE + copia_natalia}
     if lista_almacen == "almacenRionegro":
-        return {"principales": [EMAIL_RIONEGRO_PRINCIPAL], "copia": [EMAIL_RIONEGRO_COPIA] + EMAIL_COPIA_SIEMPRE}
+        return {"principales": [EMAIL_RIONEGRO_PRINCIPAL], "copia": [EMAIL_RIONEGRO_COPIA] + EMAIL_COPIA_SIEMPRE + copia_natalia}
     if lista_almacen == "almacenRionegroSabaneta":
         return {
             "principales": [EMAIL_SABANETA_PRINCIPAL, EMAIL_RIONEGRO_PRINCIPAL],
-            "copia":       [EMAIL_SABANETA_COPIA, EMAIL_RIONEGRO_COPIA] + EMAIL_COPIA_SIEMPRE,
+            "copia":       [EMAIL_SABANETA_COPIA, EMAIL_RIONEGRO_COPIA] + EMAIL_COPIA_SIEMPRE + copia_natalia,
         }
     return {}
 
