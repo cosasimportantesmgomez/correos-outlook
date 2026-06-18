@@ -32,7 +32,6 @@
     {"nit_proveedor": "901606379", "nombre_proveedor": "INDUSTRIAS MEGATEK S.A.S"},
     {"nit_proveedor": "901256260", "nombre_proveedor": "INGEFILOS S.A.S"},
     {"nit_proveedor": "900420442", "nombre_proveedor": "INSTRUMENTOS & PARTES S.A.S."},
-    {"nit_proveedor": "70503296", "nombre_proveedor": "Insumos Minotauro"},
     {"nit_proveedor": "900794549", "nombre_proveedor": "INSUMOS PARA SU IMPRENTA S.A.S"},
     {"nit_proveedor": "900611504", "nombre_proveedor": "INSUMOS Y EQUIPOS GRAFICOS SAS"},
     {"nit_proveedor": "900201371", "nombre_proveedor": "INSUMOS Y TERMINADOS GRÁFICOS S.A.S / INTERGRAFICOS"},
@@ -40,7 +39,6 @@
     {"nit_proveedor": "811047183", "nombre_proveedor": "J & J ASOCIADOS Y CIA . S.A.S."},
     {"nit_proveedor": "52014675", "nombre_proveedor": "RITHA HIMELDA JIMENEZ CASTRO"},
     {"nit_proveedor": "1152711717", "nombre_proveedor": "JUAN CAMILO VASQUEZ LOPEZ"},
-    {"nit_proveedor": "901787856", "nombre_proveedor": "KROMATICA S.A.S"},
     {"nit_proveedor": "900077818", "nombre_proveedor": "M & R INTERNACIONAL S.A.S"},
     {"nit_proveedor": "51890969", "nombre_proveedor": "MADRIGAL ACOSTA CLAUDIA LUCIA MADRIGAL ACOSTA"},
     {"nit_proveedor": "900260945", "nombre_proveedor": "MARINPLAST S.A.S."},
@@ -51,7 +49,6 @@
     {"nit_proveedor": "830120839", "nombre_proveedor": "MULTISUMINISTROS INDUSTRIALES S A S"},
     {"nit_proveedor": "890940567", "nombre_proveedor": "PAPELCARD S.A.S"},
     {"nit_proveedor": "800065887", "nombre_proveedor": "PAPELERA FK S.A.S."},
-    {"nit_proveedor": "900770336", "nombre_proveedor": "PAPELERIA EL PINGUINO S.A.S"},
     {"nit_proveedor": "900193357", "nombre_proveedor": "PAPELES R.R. S.A.S"},
     {"nit_proveedor": "15513657", "nombre_proveedor": "PINEDA MONTOYA JUAN GONZALO"},
     {"nit_proveedor": "800102099", "nombre_proveedor": "PLASMAVALL S.A.S"},
@@ -69,7 +66,10 @@
     {"nit_proveedor": "900144086", "nombre_proveedor": "TODO SOBRE MODA S.A.S"},
     {"nit_proveedor": "830057171", "nombre_proveedor": "TRADECOM E.R. ASOCIADOS S.A.S"},
     {"nit_proveedor": "900615281", "nombre_proveedor": "TROQUELADOS PAO S.A.S"},
-    {"nit_proveedor": "901673200", "nombre_proveedor": "VITAGRAF SAS"}
+    {"nit_proveedor": "901673200", "nombre_proveedor": "VITAGRAF SAS"},
+    {"nit_proveedor": "901060215", "nombre_proveedor": "CORDONES Y TRENZADOS S.A.S"},
+    {"nit_proveedor": "900746035", "nombre_proveedor": "CREAR HUB DIGITAL S A S"},
+    {"nit_proveedor": "811001182", "nombre_proveedor": "CONVEXA SAS"}
   ],
   "almacenRionegro": [
     {"nit_proveedor": "900490873", "nombre_proveedor": "AIRPOWER SAS"},
@@ -115,6 +115,7 @@
     {"nit_proveedor": "890912249", "nombre_proveedor": "LUBRIMAQ S.A.S"},
     {"nit_proveedor": "900542694", "nombre_proveedor": "PAPELEX S.A.S"},
     {"nit_proveedor": "900490683", "nombre_proveedor": "PLUS SOLUTIONS S.A.S"},
-    {"nit_proveedor": "890922294", "nombre_proveedor": "PROTOKIMICA S.A.S."}
+    {"nit_proveedor": "890922294", "nombre_proveedor": "PROTOKIMICA S.A.S."},
+    {"nit_proveedor": "900770336", "nombre_proveedor": "PAPELERIA EL PINGUINO S.A.S"}
   ]
 }

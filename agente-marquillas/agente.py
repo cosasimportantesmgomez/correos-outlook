@@ -277,24 +277,32 @@ def obtener_correos_nuevos(token: str) -> list:
     Lanza: Exception si la llamada a Graph API falla (token inválido, sin conexión, etc.).
     """
     try:
-        url_correos  = f"{URL_GRAPH_API}/users/{EMAIL_MONITOREAR}/mailFolders/inbox/messages"
-        encabezados  = {"Authorization": f"Bearer {token}"}
-        parametros   = {
+        url_correos     = f"{URL_GRAPH_API}/users/{EMAIL_MONITOREAR}/mailFolders/inbox/messages"
+        encabezados     = {"Authorization": f"Bearer {token}"}
+        parametros      = {
             "$filter":  "isRead eq false and hasAttachments eq true",
             "$select":  "id,subject,from,receivedDateTime,hasAttachments",
             "$expand":  "attachments($select=id,name,contentType,size)",
-            "$top":     "10",
+            "$orderby": "receivedDateTime asc",
+            "$top":     "50",
         }
 
-        respuesta = requests.get(
-            url_correos, headers=encabezados, params=parametros, timeout=30
-        )
-        respuesta.raise_for_status()
-        print(f"[DIAGNÓSTICO] URL consultada: {respuesta.url}")
-        print(f"[DIAGNÓSTICO] Total correos retornados: {len(respuesta.json().get('value', []))}")
+        todos           = []
+        url_siguiente   = url_correos
+        params_actuales = parametros
 
-        lista_correos = respuesta.json().get("value", [])
-        return lista_correos
+        while url_siguiente:
+            respuesta = requests.get(
+                url_siguiente, headers=encabezados, params=params_actuales, timeout=30
+            )
+            respuesta.raise_for_status()
+            datos = respuesta.json()
+            todos.extend(datos.get("value", []))
+            url_siguiente   = datos.get("@odata.nextLink")
+            params_actuales = None  # nextLink ya trae los params embebidos en la URL
+
+        print(f"[DIAGNÓSTICO] Total correos no leídos con adjunto: {len(todos)}")
+        return todos
 
     except requests.exceptions.RequestException as error:
         log.error(f"💥 Error al consultar correos en Microsoft Graph: {error}")
