@@ -553,7 +553,7 @@ def verificar_documento_con_claude(texto_pdf: str, instrucciones: str) -> dict:
     """
     try:
         log.info("🤖 Consultando a OpenAI...")
-        cliente_openai = OpenAI(api_key=OPENAI_API_KEY)
+        cliente_openai = OpenAI(api_key=OPENAI_API_KEY, timeout=120)
 
         contenido_usuario = (
             "Analiza el siguiente texto extraído de un PDF de factura "
@@ -643,7 +643,7 @@ def verificar_pdf_con_imagenes(bytes_pdf: bytes, instrucciones: str) -> dict:
     try:
         log.info("🤖 Consultando a OpenAI con imágenes del PDF...")
         imagenes_b64   = convertir_pdf_a_imagenes(bytes_pdf)
-        cliente_openai = OpenAI(api_key=OPENAI_API_KEY)
+        cliente_openai = OpenAI(api_key=OPENAI_API_KEY, timeout=120)
 
         respuesta = cliente_openai.chat.completions.create(
             model=MODELO_OPENAI,
@@ -1080,7 +1080,7 @@ def clasificar_con_claude(texto: str, instrucciones_clasificador: str) -> str:
         return "NINGUNO"
 
     try:
-        cliente_openai   = OpenAI(api_key=OPENAI_API_KEY)
+        cliente_openai   = OpenAI(api_key=OPENAI_API_KEY, timeout=120)
         respuesta        = cliente_openai.chat.completions.create(
             model="gpt-4o-mini",
             max_tokens=10,
@@ -1358,8 +1358,8 @@ def limpiar_nit(nit: str) -> str:
         return ""
     nit = nit[primer_digito:]
 
-    # 3. Eliminar todos los puntos separadores de miles
-    nit = nit.replace(".", "")
+    # 3. Eliminar todos los puntos y comas separadores de miles
+    nit = nit.replace(".", "").replace(",", "")
 
     # 4. Cortar desde el primer carácter no numérico en adelante
     #    Maneja guiones ASCII (-), en dash (–), em dash (—) y cualquier otro separador
