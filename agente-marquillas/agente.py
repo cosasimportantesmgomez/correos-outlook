@@ -283,7 +283,6 @@ def obtener_correos_nuevos(token: str) -> list:
             "$filter":  "isRead eq false and hasAttachments eq true",
             "$select":  "id,subject,from,receivedDateTime,hasAttachments",
             "$expand":  "attachments($select=id,name,contentType,size)",
-            "$orderby": "receivedDateTime asc",
             "$top":     "50",
         }
 
@@ -301,6 +300,7 @@ def obtener_correos_nuevos(token: str) -> list:
             url_siguiente   = datos.get("@odata.nextLink")
             params_actuales = None  # nextLink ya trae los params embebidos en la URL
 
+        todos.sort(key=lambda c: c.get("receivedDateTime", ""))
         print(f"[DIAGNÓSTICO] Total correos no leídos con adjunto: {len(todos)}")
         return todos
 
