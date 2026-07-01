@@ -957,6 +957,74 @@ def mover_correo_a_carpeta(token: str, correo_id: str, carpeta_id: str) -> None:
         raise
 
 
+def nombre_mes_actual() -> str:
+    """
+    Retorna el nombre del mes actual en español y en MAYÚSCULAS.
+    No depende del locale del sistema — usa una tupla fija para ser consistente
+    en cualquier equipo o sistema operativo.
+    Retorna: string con el nombre del mes (ej: "JULIO", "ENERO").
+    """
+    nombres = (
+        "ENERO", "FEBRERO", "MARZO", "ABRIL", "MAYO", "JUNIO",
+        "JULIO", "AGOSTO", "SEPTIEMBRE", "OCTUBRE", "NOVIEMBRE", "DICIEMBRE",
+    )
+    return nombres[datetime.now().month - 1]
+
+
+def obtener_o_crear_carpeta_mes(token: str) -> str | None:
+    """
+    Devuelve el ID de la carpeta del mes en la raíz del buzón, creándola si no existe.
+    El nombre se toma de la variable de entorno CARPETA_MES si tiene valor no vacío;
+    de lo contrario se usa nombre_mes_actual() para calcularlo automáticamente.
+    La búsqueda recorre SOLO las carpetas raíz (mailFolders) con paginación, sin
+    descender a subcarpetas — así se garantiza que la carpeta siempre quede en la raíz.
+    Recibe: token (str) — token de acceso de Microsoft Graph API.
+    Retorna: string con el ID de la carpeta (existente o recién creada).
+    Retorna None si ocurre cualquier error de red o de la API.
+    """
+    try:
+        override = os.getenv("CARPETA_MES", "").strip()
+        nombre   = override if override else nombre_mes_actual()
+
+        url_raiz    = f"{URL_GRAPH_API}/users/{EMAIL_MONITOREAR}/mailFolders"
+        encabezados = {"Authorization": f"Bearer {token}"}
+
+        # Recorrer todas las carpetas raíz con paginación
+        url_siguiente   = url_raiz
+        params_actuales = {"$top": "100", "$select": "id,displayName"}
+        while url_siguiente:
+            respuesta = requests.get(
+                url_siguiente, headers=encabezados, params=params_actuales, timeout=15
+            )
+            respuesta.raise_for_status()
+            datos = respuesta.json()
+            for carpeta in datos.get("value", []):
+                if carpeta.get("displayName", "").strip().upper() == nombre.upper():
+                    return carpeta["id"]
+            url_siguiente   = datos.get("@odata.nextLink")
+            params_actuales = None  # nextLink ya trae los params embebidos
+
+        # No existe — crearla en la raíz
+        log.info(f"📁 Carpeta '{nombre}' no encontrada — creándola en la raíz del buzón...")
+        respuesta_crear = requests.post(
+            url_raiz,
+            headers={**encabezados, "Content-Type": "application/json"},
+            json={"displayName": nombre},
+            timeout=15,
+        )
+        if respuesta_crear.status_code == 201:
+            carpeta_id = respuesta_crear.json()["id"]
+            log.info(f"✅ Carpeta '{nombre}' creada exitosamente en la raíz del buzón")
+            return carpeta_id
+
+        log.error(f"❌ No se pudo crear la carpeta '{nombre}': {respuesta_crear.status_code} {respuesta_crear.text}")
+        return None
+
+    except Exception as error:
+        log.error(f"💥 Error al obtener o crear la carpeta del mes '{nombre}': {error}")
+        return None
+
+
 def procesar_aprobacion(token: str, correo_respuesta: dict) -> None:
     """
     Orquesta todo el proceso cuando se detecta una respuesta de aprobación humana.
@@ -990,15 +1058,15 @@ def procesar_aprobacion(token: str, correo_respuesta: dict) -> None:
         nombre_pdf  = adjunto_pdf.get("name", "factura.pdf") if adjunto_pdf else "factura.pdf"
         _registrar_aprobado_humano(respuesta_id, nombre_pdf)
 
-        # 3. Mover el correo original a JULIO y marcarlo como leído
+        # 3. Mover el correo original a la carpeta del mes y marcarlo como leído
         if correo_original:
-            carpeta_mes_id = obtener_id_carpeta_outlook(token, "JULIO")
+            carpeta_mes_id = obtener_o_crear_carpeta_mes(token)
             if not carpeta_mes_id:
-                log.error("❌ La carpeta 'JULIO' no existe en Outlook — el correo original no se movió")
+                log.error("❌ No se pudo obtener ni crear la carpeta del mes — el correo original no se movió")
             else:
                 marcar_correo_como_leido(token, correo_original["id"])
                 mover_correo_a_carpeta(token, correo_original["id"], carpeta_mes_id)
-                log.info("📁 Correo original marcado como leído y movido a carpeta JULIO")
+                log.info(f"📁 Correo original marcado como leído y movido a carpeta del mes")
 
     except Exception as error:
         log.error(f"💥 Error al procesar la aprobación del correo '{asunto}': {error}")
@@ -1147,15 +1215,15 @@ def procesar_rechazo(token: str, correo_respuesta: dict) -> None:
         nombre_pdf  = adjunto_pdf.get("name", "factura.pdf") if adjunto_pdf else "factura.pdf"
         _registrar_rechazado_humano(respuesta_id, nombre_pdf)
 
-        # 3. Mover el correo original a JULIO y marcarlo como leído
+        # 3. Mover el correo original a la carpeta del mes y marcarlo como leído
         if correo_original:
-            carpeta_mes_id = obtener_id_carpeta_outlook(token, "JULIO")
+            carpeta_mes_id = obtener_o_crear_carpeta_mes(token)
             if not carpeta_mes_id:
-                log.error("❌ La carpeta 'JULIO' no existe en Outlook — el correo original no se movió")
+                log.error("❌ No se pudo obtener ni crear la carpeta del mes — el correo original no se movió")
             else:
                 marcar_correo_como_leido(token, correo_original["id"])
                 mover_correo_a_carpeta(token, correo_original["id"], carpeta_mes_id)
-                log.info("📁 Correo original marcado como leído y movido a carpeta JULIO")
+                log.info(f"📁 Correo original marcado como leído y movido a carpeta del mes")
 
     except Exception as error:
         log.error(f"💥 Error al procesar el rechazo del correo '{asunto}': {error}")
