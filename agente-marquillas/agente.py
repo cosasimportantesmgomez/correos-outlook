@@ -990,15 +990,15 @@ def procesar_aprobacion(token: str, correo_respuesta: dict) -> None:
         nombre_pdf  = adjunto_pdf.get("name", "factura.pdf") if adjunto_pdf else "factura.pdf"
         _registrar_aprobado_humano(respuesta_id, nombre_pdf)
 
-        # 3. Mover el correo original a JUNIO y marcarlo como leído
+        # 3. Mover el correo original a JULIO y marcarlo como leído
         if correo_original:
-            carpeta_mes_id = obtener_id_carpeta_outlook(token, "JUNIO")
+            carpeta_mes_id = obtener_id_carpeta_outlook(token, "JULIO")
             if not carpeta_mes_id:
-                log.error("❌ La carpeta 'JUNIO' no existe en Outlook — el correo original no se movió")
+                log.error("❌ La carpeta 'JULIO' no existe en Outlook — el correo original no se movió")
             else:
                 marcar_correo_como_leido(token, correo_original["id"])
                 mover_correo_a_carpeta(token, correo_original["id"], carpeta_mes_id)
-                log.info("📁 Correo original marcado como leído y movido a carpeta JUNIO")
+                log.info("📁 Correo original marcado como leído y movido a carpeta JULIO")
 
     except Exception as error:
         log.error(f"💥 Error al procesar la aprobación del correo '{asunto}': {error}")
@@ -1147,15 +1147,15 @@ def procesar_rechazo(token: str, correo_respuesta: dict) -> None:
         nombre_pdf  = adjunto_pdf.get("name", "factura.pdf") if adjunto_pdf else "factura.pdf"
         _registrar_rechazado_humano(respuesta_id, nombre_pdf)
 
-        # 3. Mover el correo original a JUNIO y marcarlo como leído
+        # 3. Mover el correo original a JULIO y marcarlo como leído
         if correo_original:
-            carpeta_mes_id = obtener_id_carpeta_outlook(token, "JUNIO")
+            carpeta_mes_id = obtener_id_carpeta_outlook(token, "JULIO")
             if not carpeta_mes_id:
-                log.error("❌ La carpeta 'JUNIO' no existe en Outlook — el correo original no se movió")
+                log.error("❌ La carpeta 'JULIO' no existe en Outlook — el correo original no se movió")
             else:
                 marcar_correo_como_leido(token, correo_original["id"])
                 mover_correo_a_carpeta(token, correo_original["id"], carpeta_mes_id)
-                log.info("📁 Correo original marcado como leído y movido a carpeta JUNIO")
+                log.info("📁 Correo original marcado como leído y movido a carpeta JULIO")
 
     except Exception as error:
         log.error(f"💥 Error al procesar el rechazo del correo '{asunto}': {error}")
@@ -1247,7 +1247,7 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str) -> None:
 
             if not resultado.get("aprobado"):
                 _registrar_rechazado_agente(correo_id, asunto, resultado)
-                print(f"❌ Factura rechazada por el agente: {asunto.split(';')[1].strip() if ';' in asunto else asunto}")
+                print(f"❌ Factura rechazada por el agente: {asunto.split(';')[1].strip() if ';' in asunto else asunto} — Motivo: {resultado.get('motivo', 'sin motivo')}")
                 return  # No marcar como leído — factura rechazada por Claude
 
             # ── Fase 3: buscar el proveedor y determinar destinatarios ──
