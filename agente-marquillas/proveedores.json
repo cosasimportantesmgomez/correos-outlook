@@ -69,7 +69,8 @@
     {"nit_proveedor": "901673200", "nombre_proveedor": "VITAGRAF SAS"},
     {"nit_proveedor": "901060215", "nombre_proveedor": "CORDONES Y TRENZADOS S.A.S"},
     {"nit_proveedor": "900746035", "nombre_proveedor": "CREAR HUB DIGITAL S A S"},
-    {"nit_proveedor": "811001182", "nombre_proveedor": "CONVEXA SAS"}
+    {"nit_proveedor": "811001182", "nombre_proveedor": "CONVEXA SAS"},
+    {"nit_proveedor": "800136038", "nombre_proveedor": "GRAFITINTAS SA"}
   ],
   "almacenRionegro": [
     {"nit_proveedor": "900490873", "nombre_proveedor": "AIRPOWER SAS"},
