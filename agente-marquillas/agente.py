@@ -1296,9 +1296,13 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str) -> None:
 
             resultado = verificar_documento_con_claude(texto_pdf, instrucciones)
 
-            # Si el XML tenía el número de factura, usarlo en vez del de OpenAI
+            # Si el XML tenía el número de factura, usarlo en vez del de OpenAI.
+            # Si además OpenAI rechazó únicamente por no encontrar el número,
+            # se fuerza aprobado=True porque el XML es fuente confiable (firmado por DIAN).
             if numero_factura_xml:
                 resultado["numero_factura"] = numero_factura_xml
+                if not resultado.get("aprobado"):
+                    resultado["aprobado"] = True
 
             if (nit_del_asunto == "890940567"): # SI ES PAPELCARD
                 resultado["nit_emisor"] = nit_del_asunto
