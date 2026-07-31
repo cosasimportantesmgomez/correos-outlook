@@ -17,6 +17,7 @@ import re
 import base64
 import logging
 import unicodedata
+import uuid
 import zipfile
 import time
 from datetime import datetime
@@ -54,6 +55,12 @@ EMAIL_COPIA_SIEMPRE        = [
 ]
 INTERVALO_MINUTOS   = int(os.getenv("INTERVALO_MINUTOS", "5"))
 ARCHIVO_PROVEEDORES = "proveedores.json"
+API_FACTURAS_URL    = os.getenv("API_FACTURAS_URL", "")
+API_FACTURAS_URL_ESTADO = os.getenv("API_FACTURAS_URL_ESTADO", "")
+SHAREPOINT_SITE_URL            = os.getenv("SHAREPOINT_SITE_URL", "")
+SHAREPOINT_CARPETA_SIN_APROBAR = os.getenv("SHAREPOINT_CARPETA_SIN_APROBAR", "SIN APROBAR")
+SHAREPOINT_CARPETA_APROBADAS   = os.getenv("SHAREPOINT_CARPETA_APROBADAS", "APROBADAS")
+SHAREPOINT_CARPETA_RECHAZADAS  = os.getenv("SHAREPOINT_CARPETA_RECHAZADAS", "RECHAZADAS")
 
 # ═══ CONSTANTES ═══
 NIT_ESPERADO          = "890900314"
@@ -448,6 +455,221 @@ def extraer_numero_factura_del_xml(bytes_zip: bytes) -> str:
         return ""
 
 
+def extraer_datos_factura_xml(bytes_zip: bytes) -> dict | None:
+    """
+    Extrae los datos completos de la factura desde el XML dentro del ZIP.
+    Se llama solo cuando OpenAI aprueba la factura, antes de acumularla en la lista del ciclo.
+
+    Estructura del XML: raíz <AttachedDocument> con namespace estándar DIAN Colombia.
+    Los datos monetarios, las líneas y la fecha de vencimiento viven en el <Invoice>
+    embebido como CDATA dentro de <cac:Attachment>/<cac:ExternalReference>/<cbc:Description>,
+    por lo que ese XML interno se parsea por separado.
+
+    Campos OBLIGATORIOS (si falta alguno retorna None):
+      - nit_proveedor, numero_factura, fecha_factura
+    Campos OPCIONALES (si no se encuentran van como None, o 0.00 en descuentos/retención):
+      - nombre_proveedor, fecha_vencimiento, totales, items
+
+    Recibe: bytes_zip (bytes) — contenido binario del ZIP descargado del correo.
+    Retorna: diccionario con la estructura acordada para la API externa, o None.
+    No lanza excepciones — ante cualquier error retorna None.
+    """
+    import xml.etree.ElementTree as ET
+
+    NS = {
+        "cbc": "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2",
+        "cac": "urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2",
+    }
+
+    def _texto(elemento) -> str | None:
+        """Retorna el texto limpio de un elemento o None si no existe."""
+        if elemento is not None and elemento.text:
+            return elemento.text.strip()
+        return None
+
+    def _flotante(elemento) -> float | None:
+        """Convierte el texto de un elemento a float o None si no existe o no es numérico."""
+        texto = _texto(elemento)
+        if texto is None:
+            return None
+        try:
+            return float(texto)
+        except ValueError:
+            return None
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(bytes_zip), "r") as archivo_zip:
+            nombre_xml = next(
+                (n for n in archivo_zip.namelist() if n.lower().endswith(".xml")),
+                None,
+            )
+            if not nombre_xml:
+                return None
+            contenido_xml = archivo_zip.read(nombre_xml)
+
+        raiz = ET.fromstring(contenido_xml)
+
+        # ── Campos del documento raíz (AttachedDocument) ──
+        numero_factura = _texto(raiz.find("cbc:ParentDocumentID", NS))
+        fecha_factura  = _texto(raiz.find("cbc:IssueDate", NS))
+
+        # ── Tipo de documento — se determina a partir de cbc:ProfileID del raíz ──
+        perfil_documento = _texto(raiz.find("cbc:ProfileID", NS))
+        tipo_documento = ""
+        if perfil_documento:
+            perfil_normalizado = perfil_documento.lower()
+            if "factura" in perfil_normalizado and "nota" not in perfil_normalizado:
+                tipo_documento = "FFP"
+            elif "equivalente" in perfil_normalizado:
+                tipo_documento = "FDE"
+            elif "soporte" in perfil_normalizado:
+                tipo_documento = "SDF"
+
+        # ── Invoice embebido en CDATA — ahí viven totales, líneas y vencimiento ──
+        factura_interna = None
+        descripcion_cdata = _texto(
+            raiz.find("cac:Attachment/cac:ExternalReference/cbc:Description", NS)
+        )
+        if descripcion_cdata:
+            try:
+                factura_interna = ET.fromstring(descripcion_cdata)
+            except ET.ParseError:
+                factura_interna = None
+
+        # ── NIT y nombre del proveedor — primero del Invoice interno, luego del raíz ──
+        nit_proveedor    = None
+        nombre_proveedor = None
+        if factura_interna is not None:
+            emisor = factura_interna.find("cac:AccountingSupplierParty", NS)
+            if emisor is not None:
+                nit_proveedor    = _texto(emisor.find(".//cbc:CompanyID", NS))
+                nombre_proveedor = _texto(emisor.find(".//cbc:RegistrationName", NS))
+            # La fecha del Invoice interno sirve de respaldo si el raíz no la tenía
+            if not fecha_factura:
+                fecha_factura = _texto(factura_interna.find("cbc:IssueDate", NS))
+        if not nit_proveedor:
+            remitente = raiz.find("cac:SenderParty", NS)
+            if remitente is not None:
+                nit_proveedor = _texto(remitente.find(".//cbc:CompanyID", NS))
+                if not nombre_proveedor:
+                    nombre_proveedor = _texto(remitente.find(".//cbc:RegistrationName", NS))
+
+        # ── Validar campos obligatorios ──
+        if not nit_proveedor or not numero_factura or not fecha_factura:
+            return None
+
+        # ── Fecha de vencimiento, totales e items (solo existen en el Invoice interno) ──
+        fecha_vencimiento = None
+        valor_bruto = descuentos = subtotal = impuestos = retencion = valor_total = None
+        items = []
+
+        if factura_interna is not None:
+            fecha_vencimiento = _texto(
+                factura_interna.find("cac:PaymentMeans/cbc:PaymentDueDate", NS)
+            )
+            if fecha_vencimiento is None:
+                fecha_vencimiento = _texto(factura_interna.find("cbc:DueDate", NS))
+
+            totales_legales = factura_interna.find("cac:LegalMonetaryTotal", NS)
+            if totales_legales is not None:
+                valor_bruto = _flotante(totales_legales.find("cbc:LineExtensionAmount", NS))
+                descuentos  = _flotante(totales_legales.find("cbc:AllowanceTotalAmount", NS))
+                subtotal    = _flotante(totales_legales.find("cbc:TaxExclusiveAmount", NS))
+                valor_total = _flotante(totales_legales.find("cbc:PayableAmount", NS))
+
+            # Impuestos: sumar los TaxAmount directos de todos los TaxTotal del documento
+            montos_impuesto = [
+                _flotante(total.find("cbc:TaxAmount", NS))
+                for total in factura_interna.findall("cac:TaxTotal", NS)
+            ]
+            montos_impuesto = [m for m in montos_impuesto if m is not None]
+            impuestos = sum(montos_impuesto) if montos_impuesto else None
+
+            retencion = _flotante(
+                factura_interna.find("cac:WithholdingTaxTotal/cbc:TaxAmount", NS)
+            )
+
+            for linea in factura_interna.findall("cac:InvoiceLine", NS):
+                descripcion = _texto(linea.find("cac:Item/cbc:Description", NS))
+                if descripcion is None:
+                    descripcion = _texto(linea.find("cac:Item/cbc:Name", NS))
+                codigo = _texto(
+                    linea.find("cac:Item/cac:SellersItemIdentification/cbc:ID", NS)
+                )
+                items.append({
+                    "codigo":            codigo or "",
+                    "descripcion":       descripcion,
+                    "valor_total_linea": _flotante(linea.find("cbc:LineExtensionAmount", NS)),
+                })
+
+        # Valores por defecto acordados para los opcionales no encontrados
+        if descuentos is None:
+            descuentos = 0.00
+        if retencion is None:
+            retencion = 0.00
+        if subtotal is None:
+            subtotal = valor_bruto
+
+        return {
+            "nit_proveedor":     nit_proveedor,
+            "nombre_proveedor":  nombre_proveedor,
+            "numero_factura":    numero_factura,
+            "fecha_factura":     fecha_factura,
+            "fecha_vencimiento": fecha_vencimiento,
+            "tipo_documento":    tipo_documento,
+            "totales": {
+                "valor_bruto":  valor_bruto,
+                "descuentos":   descuentos,
+                "subtotal":     subtotal,
+                "impuestos":    impuestos,
+                "retencion":    retencion,
+                "valor_total":  valor_total,
+            },
+            "items": items,
+        }
+
+    except Exception:
+        return None
+
+
+def enviar_facturas_a_api(facturas: list) -> bool:
+    """
+    Envía la lista completa de facturas aprobadas en el ciclo como un único
+    JSON a la API REST externa. Una sola petición por ciclo con todas las
+    facturas acumuladas — no una petición por cada factura.
+
+    El body enviado es: {"facturas": [ {...}, {...}, ... ]}
+
+    La URL del endpoint se lee de la constante API_FACTURAS_URL (variable de
+    entorno API_FACTURAS_URL). Si está vacía no envía nada y retorna False.
+    Recibe: facturas (list) — diccionarios generados por extraer_datos_factura_xml().
+    Retorna: True si la API respondió 200 o 201, False en cualquier otro caso.
+    No lanza excepciones — los errores quedan registrados en el log de errores.
+    """
+    if not API_FACTURAS_URL:
+        return False
+
+    try:
+        respuesta = requests.post(
+            API_FACTURAS_URL,
+            json={"facturas": facturas},
+            headers={"Content-Type": "application/json"},
+            timeout=15,
+        )
+        if respuesta.status_code in (200, 201):
+            log.info(f"📤 {len(facturas)} factura(s) enviada(s) a la API externa")
+            return True
+
+        log.error(
+            f"💥 La API de facturas respondió {respuesta.status_code}: {respuesta.text[:300]}"
+        )
+        return False
+
+    except Exception as error:
+        log.error(f"💥 Error al enviar facturas a la API externa: {error}")
+        return False
+
+
 def es_nota_credito(texto_pdf: str) -> bool:
     """
     Determina si un PDF es una nota crédito buscando términos específicos en su texto.
@@ -690,7 +912,7 @@ def verificar_pdf_con_imagenes(bytes_pdf: bytes, instrucciones: str) -> dict:
 
 def enviar_correo_aprobado(
     token: str, bytes_pdf: bytes, nombre_pdf: str, resultado: dict,
-    destinatarios: dict
+    destinatarios: dict, item_id_sharepoint: str = "", uuid_factura: str = ""
 ) -> None:
     """
     Envía un correo electrónico con el PDF adjunto usando destinatarios principales y en copia.
@@ -703,6 +925,10 @@ def enviar_correo_aprobado(
       - nombre_pdf (str): nombre del archivo PDF para mostrarlo como adjunto.
       - resultado (dict): diccionario de Claude con razon_social_emisor y numero_factura.
       - destinatarios (dict): diccionario con claves "principales" y "copia", cada una lista de correos.
+      - item_id_sharepoint (str): ID del PDF subido a SharePoint — viaja invisible en el
+        REF-AGENTE para poder mover el archivo cuando el área apruebe o rechace.
+      - uuid_factura (str): UUID único de la factura — viaja invisible en el REF-AGENTE
+        para que PHP identifique el registro cuando el área apruebe o rechace.
     No retorna nada. Lanza: Exception si hay error al enviar via Microsoft Graph.
     """
     try:
@@ -719,7 +945,7 @@ def enviar_correo_aprobado(
             "<p>Buen día,</p>"
             "<p>Comparto la siguiente factura para su revisión y gestión/aceptación.</p>"
             "<br>"
-            f"<p style=\"color: white; font-size: 1px;\">REF-AGENTE: {emisor} - {numero_factura}</p>"
+            f"<p style=\"color: white; font-size: 1px;\">REF-AGENTE: {emisor} - {numero_factura} | SP-ID: {item_id_sharepoint or ''} | UUID: {uuid_factura or ''}</p>"
             "<br>"
             "<p><i>Correo enviado por DocuBotMqs.</i></p>"
         )
@@ -957,6 +1183,234 @@ def mover_correo_a_carpeta(token: str, correo_id: str, carpeta_id: str) -> None:
         raise
 
 
+# ═══════════════════════════════════════════════════════════════
+# INTEGRACIÓN CON SHAREPOINT — subida y movimiento de PDFs
+# ═══════════════════════════════════════════════════════════════
+
+# Cache global del sitio y del drive — se consultan una sola vez por ejecución
+_SHAREPOINT_SITE_ID_CACHE  = None
+_SHAREPOINT_DRIVE_ID_CACHE = None
+
+
+def obtener_id_sitio_sharepoint(token: str) -> str | None:
+    """
+    Obtiene el ID del sitio de SharePoint usando Microsoft Graph API.
+    El ID es necesario para todas las operaciones de archivos en SharePoint.
+    El hostname y la ruta se derivan de SHAREPOINT_SITE_URL
+    (ej: https://marquillasl.sharepoint.com/sites/ImpuestosycomercioExterior).
+    El resultado se cachea en una variable global para no repetir la consulta en cada operación.
+    Recibe: token (str) — token de acceso de Microsoft Graph API (mismo scope .default).
+    Retorna: string con el ID del sitio, o None si falla o la URL no está configurada.
+    No lanza excepciones.
+    """
+    global _SHAREPOINT_SITE_ID_CACHE
+    if _SHAREPOINT_SITE_ID_CACHE:
+        return _SHAREPOINT_SITE_ID_CACHE
+
+    try:
+        if not SHAREPOINT_SITE_URL:
+            return None
+
+        # Separar hostname y ruta: marquillasl.sharepoint.com y /sites/Impuestosy...
+        sin_esquema = SHAREPOINT_SITE_URL.replace("https://", "").replace("http://", "")
+        hostname, _, ruta = sin_esquema.partition("/")
+
+        url_sitio   = f"{URL_GRAPH_API}/sites/{hostname}:/{ruta}"
+        encabezados = {"Authorization": f"Bearer {token}"}
+
+        respuesta = requests.get(url_sitio, headers=encabezados, timeout=15)
+        respuesta.raise_for_status()
+
+        _SHAREPOINT_SITE_ID_CACHE = respuesta.json().get("id")
+        return _SHAREPOINT_SITE_ID_CACHE
+
+    except Exception as error:
+        log.error(f"💥 Error al obtener el ID del sitio de SharePoint: {error}")
+        return None
+
+
+def _obtener_drive_id_sharepoint(token: str) -> str | None:
+    """
+    Obtiene el ID del drive (biblioteca de documentos principal) del sitio de SharePoint.
+    Necesario para construir la ruta destino al mover archivos entre carpetas.
+    El resultado se cachea en una variable global para no repetir la consulta.
+    Recibe: token (str) — token de acceso de Microsoft Graph API.
+    Retorna: string con el ID del drive, o None si falla.
+    No lanza excepciones.
+    """
+    global _SHAREPOINT_DRIVE_ID_CACHE
+    if _SHAREPOINT_DRIVE_ID_CACHE:
+        return _SHAREPOINT_DRIVE_ID_CACHE
+
+    try:
+        site_id = obtener_id_sitio_sharepoint(token)
+        if not site_id:
+            return None
+
+        url_drive   = f"{URL_GRAPH_API}/sites/{site_id}/drive"
+        encabezados = {"Authorization": f"Bearer {token}"}
+
+        respuesta = requests.get(url_drive, headers=encabezados, timeout=15)
+        respuesta.raise_for_status()
+
+        _SHAREPOINT_DRIVE_ID_CACHE = respuesta.json().get("id")
+        return _SHAREPOINT_DRIVE_ID_CACHE
+
+    except Exception as error:
+        log.error(f"💥 Error al obtener el drive de SharePoint: {error}")
+        return None
+
+
+def subir_pdf_a_sharepoint(token: str, bytes_pdf: bytes, nombre_archivo: str) -> str | None:
+    """
+    Sube un archivo PDF a la carpeta SIN APROBAR de SharePoint.
+    Usa el endpoint de subida directa de Microsoft Graph:
+    PUT /sites/{site_id}/drive/root:/{carpeta}/{nombre}:/content
+    Recibe:
+      - token (str): token de acceso de Microsoft Graph API.
+      - bytes_pdf (bytes): contenido binario del PDF a subir.
+      - nombre_archivo (str): nombre con el que quedará el archivo en SharePoint.
+    Retorna: string con el ID del archivo subido (item_id) — necesario para moverlo
+    después cuando el área apruebe o rechace. Retorna None si falla.
+    No lanza excepciones.
+    """
+    try:
+        site_id = obtener_id_sitio_sharepoint(token)
+        if not site_id:
+            return None
+
+        carpeta = requests.utils.quote(SHAREPOINT_CARPETA_SIN_APROBAR)
+        nombre  = requests.utils.quote(nombre_archivo)
+        url_subida  = f"{URL_GRAPH_API}/sites/{site_id}/drive/root:/{carpeta}/{nombre}:/content"
+        encabezados = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type":  "application/octet-stream",
+        }
+
+        respuesta = requests.put(url_subida, headers=encabezados, data=bytes_pdf, timeout=60)
+        respuesta.raise_for_status()
+
+        return respuesta.json().get("id")
+
+    except Exception as error:
+        log.error(f"💥 Error al subir el PDF '{nombre_archivo}' a SharePoint: {error}")
+        return None
+
+
+def mover_pdf_en_sharepoint(token: str, item_id: str, carpeta_destino: str) -> bool:
+    """
+    Mueve un archivo PDF de SIN APROBAR a APROBADAS o RECHAZADAS en SharePoint.
+    Usa PATCH /sites/{site_id}/drive/items/{item_id} cambiando el parentReference.
+    No se envía el campo 'name' — el archivo conserva su nombre original.
+    Recibe:
+      - token (str): token de acceso de Microsoft Graph API.
+      - item_id (str): ID del archivo obtenido al subirlo con subir_pdf_a_sharepoint().
+      - carpeta_destino (str): SHAREPOINT_CARPETA_APROBADAS o SHAREPOINT_CARPETA_RECHAZADAS.
+    Retorna: True si la operación fue exitosa, False si falla.
+    No lanza excepciones.
+    """
+    try:
+        site_id  = obtener_id_sitio_sharepoint(token)
+        drive_id = _obtener_drive_id_sharepoint(token)
+        if not site_id or not drive_id:
+            return False
+
+        url_mover   = f"{URL_GRAPH_API}/sites/{site_id}/drive/items/{item_id}"
+        encabezados = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type":  "application/json",
+        }
+        cuerpo = {
+            "parentReference": {"path": f"/drives/{drive_id}/root:/{carpeta_destino}"}
+        }
+
+        respuesta = requests.patch(url_mover, headers=encabezados, json=cuerpo, timeout=30)
+        respuesta.raise_for_status()
+        return True
+
+    except Exception as error:
+        log.error(f"💥 Error al mover el PDF en SharePoint hacia '{carpeta_destino}': {error}")
+        return False
+
+
+def extraer_sp_id_del_ref_agente(correo: dict) -> str | None:
+    """
+    Extrae el SP-ID del campo REF-AGENTE invisible en el cuerpo del correo.
+    El REF-AGENTE tiene el formato:
+    REF-AGENTE: NOMBRE_PROVEEDOR - NUMERO_FACTURA | SP-ID: ITEM_ID
+    Se busca en el cuerpo de la RESPUESTA humana, que cita el correo original del agente.
+    Recibe: correo (dict) — objeto correo de Graph API con el campo 'body'.
+    Retorna: string con el item_id de SharePoint, o None si no encuentra el patrón
+    o el SP-ID está vacío (factura enviada sin subida a SharePoint).
+    No lanza excepciones.
+    """
+    try:
+        contenido = correo.get("body", {}).get("content", "")
+        coincidencia = re.search(r"SP-ID:\s*([^\s<]+)", contenido)
+        if coincidencia:
+            return coincidencia.group(1).strip()
+        return None
+    except Exception:
+        return None
+
+
+def extraer_uuid_del_ref_agente(correo: dict) -> str | None:
+    """
+    Extrae el UUID del campo REF-AGENTE invisible en el cuerpo del correo.
+    El REF-AGENTE tiene el formato:
+    REF-AGENTE: NOMBRE - NUMERO | SP-ID: ID | UUID: uuid-aqui
+
+    Busca el patrón 'UUID: ' en el cuerpo HTML del correo y extrae el valor.
+    Retorna el UUID como string o None si no encuentra el patrón.
+    No lanza excepciones.
+    """
+    try:
+        contenido = correo.get("body", {}).get("content", "")
+        coincidencia = re.search(r"UUID:\s*([^\s<]+)", contenido)
+        if coincidencia:
+            return coincidencia.group(1).strip()
+        return None
+    except Exception:
+        return None
+
+
+def notificar_estado_factura(uuid_factura: str, aprobada: int) -> bool:
+    """
+    Notifica a la API de PHP el estado de aprobación de una factura.
+    Hace un POST a API_FACTURAS_URL_ESTADO con el UUID y el estado.
+
+    aprobada = 1 → aprobada por el área
+    aprobada = 2 → rechazada por el área
+
+    Si API_FACTURAS_URL_ESTADO está vacía retorna False sin intentar nada.
+    Timeout 10 segundos. Content-Type application/json.
+    Retorna True si la respuesta es 200 o 201.
+    No lanza excepciones.
+    """
+    if not API_FACTURAS_URL_ESTADO:
+        return False
+
+    try:
+        respuesta = requests.post(
+            API_FACTURAS_URL_ESTADO,
+            json={"uuid": uuid_factura, "aprobada": aprobada},
+            headers={"Content-Type": "application/json"},
+            timeout=10,
+        )
+        if respuesta.status_code in (200, 201):
+            log.info(f"📤 Estado de factura {uuid_factura} notificado a la API externa: aprobada={aprobada}")
+            return True
+
+        log.error(
+            f"💥 La API de estado de facturas respondió {respuesta.status_code}: {respuesta.text[:300]}"
+        )
+        return False
+
+    except Exception as error:
+        log.error(f"💥 Error al notificar estado de factura a la API externa: {error}")
+        return False
+
+
 def nombre_mes_actual() -> str:
     """
     Retorna el nombre del mes actual en español y en MAYÚSCULAS.
@@ -1049,6 +1503,19 @@ def procesar_aprobacion(token: str, correo_respuesta: dict) -> None:
         log.info(f"📁 Moviendo respuesta a carpeta {CARPETA_FACTURAS_APROBADAS}...")
         mover_correo_a_carpeta(token, respuesta_id, carpeta_id)
         log.info(f"✅ Respuesta de aprobación movida a {CARPETA_FACTURAS_APROBADAS} exitosamente")
+
+        # Mover el PDF en SharePoint → APROBADAS usando el SP-ID citado en la respuesta.
+        # Si no hay SP-ID o falla, el flujo de Outlook continúa igual.
+        sp_id = extraer_sp_id_del_ref_agente(correo_respuesta)
+        if sp_id:
+            if mover_pdf_en_sharepoint(token, sp_id, SHAREPOINT_CARPETA_APROBADAS):
+                print(f"📁 PDF movido en SharePoint → {SHAREPOINT_CARPETA_APROBADAS}")
+
+        # Notificar a la API de PHP el estado de aprobación usando el UUID citado en la
+        # respuesta. Si no hay UUID o falla la notificación, el flujo de Outlook continúa igual.
+        uuid_factura = extraer_uuid_del_ref_agente(correo_respuesta)
+        if uuid_factura:
+            notificar_estado_factura(uuid_factura, aprobada=1)
 
         # 2. Obtener el correo original para el nombre del PDF en el log
         correo_original = obtener_correo_original_del_hilo(
@@ -1207,6 +1674,19 @@ def procesar_rechazo(token: str, correo_respuesta: dict) -> None:
         mover_correo_a_carpeta(token, respuesta_id, carpeta_id)
         log.info(f"✅ Respuesta de rechazo movida a {CARPETA_FACTURAS_RECHAZADAS} exitosamente")
 
+        # Mover el PDF en SharePoint → RECHAZADAS usando el SP-ID citado en la respuesta.
+        # Si no hay SP-ID o falla, el flujo de Outlook continúa igual.
+        sp_id = extraer_sp_id_del_ref_agente(correo_respuesta)
+        if sp_id:
+            if mover_pdf_en_sharepoint(token, sp_id, SHAREPOINT_CARPETA_RECHAZADAS):
+                print(f"📁 PDF movido en SharePoint → {SHAREPOINT_CARPETA_RECHAZADAS}")
+
+        # Notificar a la API de PHP el estado de rechazo usando el UUID citado en la
+        # respuesta. Si no hay UUID o falla la notificación, el flujo de Outlook continúa igual.
+        uuid_factura = extraer_uuid_del_ref_agente(correo_respuesta)
+        if uuid_factura:
+            notificar_estado_factura(uuid_factura, aprobada=2)
+
         # 2. Obtener el correo original para el nombre del PDF en el log
         correo_original = obtener_correo_original_del_hilo(
             token, correo_respuesta.get("conversationId", "")
@@ -1229,7 +1709,7 @@ def procesar_rechazo(token: str, correo_respuesta: dict) -> None:
         log.error(f"💥 Error al procesar el rechazo del correo '{asunto}': {error}")
 
 
-def procesar_un_correo(token: str, correo: dict, instrucciones: str) -> None:
+def procesar_un_correo(token: str, correo: dict, instrucciones: str, facturas_aprobadas_ciclo: list) -> None:
     """
     Orquesta el procesamiento de un correo individual identificando cuál de los dos casos aplica.
     CASO 1 — Factura nueva: el correo tiene adjunto ZIP → verifica el PDF con Claude AI.
@@ -1242,6 +1722,8 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str) -> None:
       - token (str): token de acceso de Microsoft.
       - correo (dict): datos del correo con asunto, cuerpo y adjuntos según corresponda.
       - instrucciones (str): contenido del agente.md para enviarlo a Claude (solo Caso 1).
+      - facturas_aprobadas_ciclo (list): lista del ciclo donde se acumulan los datos
+        extraídos del XML de cada factura aprobada, para enviarlos juntos a la API externa.
     No retorna nada — todos los resultados quedan registrados en el log.
     """
     correo_id = correo.get("id", "")
@@ -1343,9 +1825,30 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str) -> None:
                 bytes_pdf,
             )
 
+            # UUID único de la factura — viaja en el REF-AGENTE del correo y en el JSON
+            # enviado a la API externa, para que PHP pueda enlazar ambos registros.
+            uuid_factura = str(uuid.uuid4())
+
+            # Extraer datos del XML y acumular en la lista del ciclo para la API externa.
+            # Si falla, el flujo principal continúa — esta funcionalidad nunca bloquea el envío.
+            datos_factura = extraer_datos_factura_xml(bytes_zip)
+            if datos_factura:
+                datos_factura['id_correo_enviado'] = uuid_factura
+                facturas_aprobadas_ciclo.append(datos_factura)
+            else:
+                log.error(f"⚠️  No se pudieron extraer datos del XML — factura no acumulada: {asunto}")
+
+            # Subir PDF a SharePoint carpeta SIN APROBAR — se hace ANTES de enviar el correo
+            # porque el item_id debe viajar en el REF-AGENTE. Si falla, el flujo continúa.
+            item_id_sharepoint = subir_pdf_a_sharepoint(token, bytes_pdf, nuevo_nombre)
+            if item_id_sharepoint:
+                print(f"📁 PDF subido a SharePoint - {SHAREPOINT_CARPETA_SIN_APROBAR}: {nuevo_nombre}")
+            else:
+                log.error(f"No se pudo subir el PDF a SharePoint: {nuevo_nombre}")
+
             _registrar_aprobado_agente(correo_id, asunto, resultado, nit_limpio, lista_almacen)
             destinatarios = determinar_destinatarios(lista_almacen, nit_limpio)
-            enviar_correo_aprobado(token, bytes_pdf, nuevo_nombre, resultado, destinatarios)
+            enviar_correo_aprobado(token, bytes_pdf, nuevo_nombre, resultado, destinatarios, item_id_sharepoint or "", uuid_factura)
             print(f"✅ Correo enviado exitosamente: {asunto.split(';')[1].strip() if ';' in asunto else asunto}")
             # Marcar como leído solo después de enviar exitosamente
             marcar_correo_como_leido(token, correo_id)
@@ -1545,6 +2048,9 @@ def procesar_correos() -> None:
         print("\nSe inicia proceso de validación de correos.")
         log.info("🔍 Revisando correos nuevos...")
 
+        # Facturas aprobadas en este ciclo — se envían juntas a la API externa al final
+        facturas_aprobadas_ciclo = []
+
         instrucciones = cargar_instrucciones_agente()
         token_acceso  = obtener_token_microsoft()
         print(f"[DIAGNÓSTICO] Token obtenido correctamente")
@@ -1574,7 +2080,11 @@ def procesar_correos() -> None:
         else:
             log.info(f"📧 {cantidad} correo(s) nuevo(s) encontrado(s)")
             for correo in todos_los_correos:
-                procesar_un_correo(token_acceso, correo, instrucciones)
+                procesar_un_correo(token_acceso, correo, instrucciones, facturas_aprobadas_ciclo)
+
+        # Enviar a la API externa todas las facturas aprobadas del ciclo en una sola petición
+        if facturas_aprobadas_ciclo:
+            enviar_facturas_a_api(facturas_aprobadas_ciclo)
 
         log.info(f"⏰ Próxima revisión en {INTERVALO_MINUTOS} minutos")
         print(f"Se finalizó la revisión de correos, se hará nuevamente en {INTERVALO_MINUTOS} minutos.")
