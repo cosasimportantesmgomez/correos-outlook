@@ -55,12 +55,14 @@ EMAIL_COPIA_SIEMPRE        = [
 ]
 INTERVALO_MINUTOS   = int(os.getenv("INTERVALO_MINUTOS", "5"))
 ARCHIVO_PROVEEDORES = "proveedores.json"
+ARCHIVO_CATALOGO_CODIGOS = "catalogo.codigos.json"
 API_FACTURAS_URL    = os.getenv("API_FACTURAS_URL", "")
 API_FACTURAS_URL_ESTADO = os.getenv("API_FACTURAS_URL_ESTADO", "")
 SHAREPOINT_SITE_URL            = os.getenv("SHAREPOINT_SITE_URL", "")
 SHAREPOINT_CARPETA_SIN_APROBAR = os.getenv("SHAREPOINT_CARPETA_SIN_APROBAR", "SIN APROBAR")
 SHAREPOINT_CARPETA_APROBADAS   = os.getenv("SHAREPOINT_CARPETA_APROBADAS", "APROBADAS")
 SHAREPOINT_CARPETA_RECHAZADAS  = os.getenv("SHAREPOINT_CARPETA_RECHAZADAS", "RECHAZADAS")
+SHAREPOINT_CARPETA_NOTAS_CREDITO = os.getenv("SHAREPOINT_CARPETA_NOTAS_CREDITO", "NOTAS CREDITO")
 
 # ═══ CONSTANTES ═══
 NIT_ESPERADO          = "890900314"
@@ -92,6 +94,11 @@ NITS_COPIA_NATALIA = {
     "900077818",
     "890938664",
     "900420442",
+    "802004090"
+}
+
+NITS_COPIA_VERONICA = {
+    "901361256"
 }
 
 
@@ -133,6 +140,92 @@ def _configurar_sistema_de_logs() -> tuple:
 
 # Inicializar los loggers al momento de importar el módulo
 log, log_aprobados_agente, log_rechazados_agente, log_aprobados_humanos, log_proveedores_no_encontrados, log_rechazados_humanos = _configurar_sistema_de_logs()
+
+
+# ═══════════════════════════════════════════════════════════════
+# CATÁLOGO DE CÓDIGOS CONTABLES — clasificación automática con OpenAI
+# ═══════════════════════════════════════════════════════════════
+
+def cargar_catalogo_codigos() -> list:
+    """
+    Carga el catálogo de códigos contables desde catalogo_codigos.json.
+    Retorna la lista de códigos o lista vacía si falla.
+    No lanza excepciones.
+    """
+    try:
+        ruta = Path(ARCHIVO_CATALOGO_CODIGOS)
+        if not ruta.exists():
+            log.error(f"💥 No se encontró '{ARCHIVO_CATALOGO_CODIGOS}' — no se puede clasificar contablemente")
+            return []
+        return json.loads(ruta.read_text(encoding="utf-8")).get("catalogo", [])
+    except Exception as error:
+        log.error(f"💥 Error al cargar {ARCHIVO_CATALOGO_CODIGOS}: {error}")
+        return []
+
+
+# Cargar el catálogo una sola vez al iniciar el módulo
+CATALOGO_CODIGOS = cargar_catalogo_codigos()
+
+
+def clasificar_factura_con_openai(datos_factura: dict) -> tuple[str, str]:
+    """
+    Usa OpenAI gpt-4o-mini para clasificar contablemente una factura
+    analizando todos sus items en conjunto y devuelve un único código
+    y descripción del catálogo autorizado.
+
+    Recibe el diccionario completo de datos_factura que ya tiene los items.
+    Retorna una tupla (codigo_servicio, descripcion_servicio).
+    Si falla o no puede clasificar retorna ("", "").
+    No lanza excepciones.
+    """
+    try:
+        catalogo_json = json.dumps(CATALOGO_CODIGOS, ensure_ascii=False)
+        nombre_proveedor = datos_factura.get("nombre_proveedor", "")
+        numero_factura   = datos_factura.get("numero_factura", "")
+        items_texto = "\n".join(
+            f"- {item.get('descripcion', '')}: ${item.get('valor_total_linea', '')}"
+            for item in datos_factura.get("items", [])
+        )
+
+        prompt = (
+            "Eres un sistema especializado en la validación, interpretación y clasificación contable de productos y servicios registrados en facturas.\n"
+            "Tu función es analizar la descripción de cada detalle facturado y compararla contra un catálogo autorizado de códigos contables.\n"
+            "Debes identificar cuál código y tipo del catálogo representa mejor la naturaleza real del producto o servicio facturado considerando TODOS los items en conjunto.\n"
+            "Debes responder EXCLUSIVAMENTE en JSON válido, sin texto adicional, sin markdown, sin explicaciones.\n"
+            "\n"
+            "Reglas estrictas:\n"
+            "- El código debe existir en el catálogo recibido.\n"
+            "- El tipo debe corresponder exactamente al código seleccionado.\n"
+            "- Devuelve un único código y tipo para toda la factura.\n"
+            "- No inventes códigos.\n"
+            "- No modifiques los códigos ni las descripciones del catálogo.\n"
+            "\n"
+            "Formato de respuesta obligatorio:\n"
+            "{\"codigo\": \"CODIGO_DEL_CATALOGO\", \"tipo\": \"DESCRIPCION_EXACTA_DEL_CATALOGO\"}\n"
+            "\n"
+            "CATÁLOGO AUTORIZADO:\n"
+            f"{catalogo_json}\n"
+            "\n"
+            "FACTURA A CLASIFICAR:\n"
+            f"Proveedor: {nombre_proveedor}\n"
+            f"Número de factura: {numero_factura}\n"
+            "Items:\n"
+            f"{items_texto}"
+        )
+
+        cliente_openai = OpenAI(api_key=OPENAI_API_KEY, timeout=120)
+        respuesta = cliente_openai.chat.completions.create(
+            model="gpt-4o-mini",
+            max_tokens=100,
+            temperature=0,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        resultado = json.loads(respuesta.choices[0].message.content.strip())
+        return (resultado["codigo"], resultado["tipo"])
+
+    except Exception as error:
+        log.error(f"💥 Error al clasificar contablemente la factura con OpenAI: {error}")
+        return ("", "")
 
 
 def _registrar_aprobado_agente(correo_id: str, asunto: str, resultado: dict, nit_emisor_limpio: str = "", lista_almacen: str = "") -> None:
@@ -1261,15 +1354,19 @@ def _obtener_drive_id_sharepoint(token: str) -> str | None:
         return None
 
 
-def subir_pdf_a_sharepoint(token: str, bytes_pdf: bytes, nombre_archivo: str) -> str | None:
+def subir_pdf_a_sharepoint(
+    token: str, bytes_pdf: bytes, nombre_archivo: str,
+    carpeta: str = SHAREPOINT_CARPETA_SIN_APROBAR
+) -> str | None:
     """
-    Sube un archivo PDF a la carpeta SIN APROBAR de SharePoint.
+    Sube un archivo PDF a una carpeta de SharePoint (por defecto, SIN APROBAR).
     Usa el endpoint de subida directa de Microsoft Graph:
     PUT /sites/{site_id}/drive/root:/{carpeta}/{nombre}:/content
     Recibe:
       - token (str): token de acceso de Microsoft Graph API.
       - bytes_pdf (bytes): contenido binario del PDF a subir.
       - nombre_archivo (str): nombre con el que quedará el archivo en SharePoint.
+      - carpeta (str): carpeta destino en SharePoint. Por defecto SHAREPOINT_CARPETA_SIN_APROBAR.
     Retorna: string con el ID del archivo subido (item_id) — necesario para moverlo
     después cuando el área apruebe o rechace. Retorna None si falla.
     No lanza excepciones.
@@ -1279,7 +1376,7 @@ def subir_pdf_a_sharepoint(token: str, bytes_pdf: bytes, nombre_archivo: str) ->
         if not site_id:
             return None
 
-        carpeta = requests.utils.quote(SHAREPOINT_CARPETA_SIN_APROBAR)
+        carpeta = requests.utils.quote(carpeta)
         nombre  = requests.utils.quote(nombre_archivo)
         url_subida  = f"{URL_GRAPH_API}/sites/{site_id}/drive/root:/{carpeta}/{nombre}:/content"
         encabezados = {
@@ -1295,6 +1392,31 @@ def subir_pdf_a_sharepoint(token: str, bytes_pdf: bytes, nombre_archivo: str) ->
     except Exception as error:
         log.error(f"💥 Error al subir el PDF '{nombre_archivo}' a SharePoint: {error}")
         return None
+
+
+def subir_nota_credito_a_sharepoint(token: str, bytes_zip: bytes, nombre_proveedor: str) -> None:
+    """
+    Extrae el PDF del ZIP de una nota crédito y lo sube a la carpeta
+    NOTAS CREDITO de SharePoint. No retorna nada ni lanza excepciones.
+    Si falla simplemente registra el error en el log y continúa.
+    """
+    try:
+        _, bytes_pdf = extraer_pdf_del_zip(bytes_zip)
+        if not bytes_pdf:
+            log.error("💥 No se pudo extraer el PDF de la nota crédito para subir a SharePoint")
+            return
+
+        timestamp      = datetime.now().strftime("%Y%m%d%H%M%S")
+        nombre_archivo = f"NOTA CREDITO - {nombre_proveedor} - {timestamp}.pdf"
+
+        item_id = subir_pdf_a_sharepoint(token, bytes_pdf, nombre_archivo, SHAREPOINT_CARPETA_NOTAS_CREDITO)
+        if item_id:
+            print(f"📁 Nota crédito subida a SharePoint - {SHAREPOINT_CARPETA_NOTAS_CREDITO}: {nombre_archivo}")
+        else:
+            log.error(f"💥 No se pudo subir la nota crédito a SharePoint: {nombre_archivo}")
+
+    except Exception as error:
+        log.error(f"💥 Error al subir la nota crédito a SharePoint: {error}")
 
 
 def mover_pdf_en_sharepoint(token: str, item_id: str, carpeta_destino: str) -> bool:
@@ -1770,7 +1892,10 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str, facturas_ap
             texto_pdf = leer_texto_del_pdf(bytes_pdf)
 
             if es_nota_credito(texto_pdf):
-                print(f"🔕 Nota crédito detectada — ignorada: {asunto.split(';')[1].strip() if ';' in asunto else asunto}")
+                nombre_proveedor_nota = asunto.split(';')[1].strip() if ';' in asunto else asunto
+                print(f"🔕 Nota crédito detectada — ignorada: {nombre_proveedor_nota}")
+                # Subir nota crédito a SharePoint
+                subir_nota_credito_a_sharepoint(token, bytes_zip, nombre_proveedor_nota)
                 return  # Nota crédito — ignorar sin log, sin Claude, sin marcar como leído
 
             # Extraer número de factura del XML — más confiable que OpenAI
@@ -1834,6 +1959,12 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str, facturas_ap
             datos_factura = extraer_datos_factura_xml(bytes_zip)
             if datos_factura:
                 datos_factura['id_correo_enviado'] = uuid_factura
+
+                # Clasificar contablemente la factura con OpenAI
+                codigo_servicio, descripcion_servicio = clasificar_factura_con_openai(datos_factura)
+                datos_factura['codigo_servicio']      = codigo_servicio
+                datos_factura['descripcion_servicio'] = descripcion_servicio
+
                 facturas_aprobadas_ciclo.append(datos_factura)
             else:
                 log.error(f"⚠️  No se pudieron extraer datos del XML — factura no acumulada: {asunto}")
@@ -1980,6 +2111,7 @@ def determinar_destinatarios(lista_almacen: str, nit_proveedor: str = "") -> dic
     Retorna dict vacío si el valor recibido no coincide con ninguna de las tres listas.
     """
     copia_natalia = ["natalia.vargas@marquillas.com.co"] if nit_proveedor in NITS_COPIA_NATALIA else []
+    copia_veronica = ["veronica.castro@marquillas.com.co"] if nit_proveedor in NITS_COPIA_VERONICA else []
 
     if lista_almacen == "almacenSabaneta":
         return {"principales": [EMAIL_SABANETA_PRINCIPAL], "copia": [EMAIL_SABANETA_COPIA] + EMAIL_COPIA_SIEMPRE + copia_natalia}
@@ -1988,7 +2120,7 @@ def determinar_destinatarios(lista_almacen: str, nit_proveedor: str = "") -> dic
     if lista_almacen == "almacenRionegroSabaneta":
         return {
             "principales": [EMAIL_SABANETA_PRINCIPAL, EMAIL_RIONEGRO_PRINCIPAL],
-            "copia":       [EMAIL_SABANETA_COPIA, EMAIL_RIONEGRO_COPIA] + EMAIL_COPIA_SIEMPRE + copia_natalia,
+            "copia":       [EMAIL_SABANETA_COPIA, EMAIL_RIONEGRO_COPIA] + EMAIL_COPIA_SIEMPRE + copia_natalia + copia_veronica,
         }
     return {}
 
