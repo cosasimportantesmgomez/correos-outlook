@@ -68,9 +68,10 @@
     {"nit_proveedor": "811001182", "nombre_proveedor": "CONVEXA SAS"},
     {"nit_proveedor": "800136038", "nombre_proveedor": "GRAFITINTAS SA"},
     {"nit_proveedor": "900459278", "nombre_proveedor": "CO PARTES Y SUMINISTROS S.A.S"},
-    {"nit_proveedor": "802004090", "nombre_proveedor": "INDUSTRIA NACIONAL PAPELERA SAS"},
+    {"nit_proveedor": "802004090", "nombre_proveedor": "INDUSTRIA NACIONAL PAPELERA SAS"}
 
   ],
+  
   "almacenRionegro": [
     {"nit_proveedor": "900490873", "nombre_proveedor": "AIRPOWER SAS"},
     {"nit_proveedor": "811033997", "nombre_proveedor": "CDEM & CDEB S.A.S"},
