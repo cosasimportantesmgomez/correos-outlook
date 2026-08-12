@@ -98,7 +98,8 @@
     {"nit_proveedor": "901361256", "nombre_proveedor": "TUERCAS Y TORNILLOS RIONEGRO SAS"},
     {"nit_proveedor": "900796244", "nombre_proveedor": "WENDELL S.A.S"},
     {"nit_proveedor": "900255349", "nombre_proveedor": "SERVIEQUIPOS DE ORIENTE LTDA"},
-    {"nit_proveedor": "811034893", "nombre_proveedor": "DISTRIALES SAS"}
+    {"nit_proveedor": "811034893", "nombre_proveedor": "DISTRIALES SAS"},
+    {"nit_proveedor": "901550079", "nombre_proveedor": "SUPLETEX SAS"}
   ],
   "almacenRionegroSabaneta": [
     {"nit_proveedor": "800251566", "nombre_proveedor": "A'SELLASEG INGENIERÍA S.A.S."},
