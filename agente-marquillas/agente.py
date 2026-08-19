@@ -58,6 +58,7 @@ ARCHIVO_PROVEEDORES = "proveedores.json"
 ARCHIVO_CATALOGO_CODIGOS = "catalogo.codigos.json"
 API_FACTURAS_URL    = os.getenv("API_FACTURAS_URL", "")
 API_FACTURAS_URL_ESTADO = os.getenv("API_FACTURAS_URL_ESTADO", "")
+API_VERIFICAR_FACTURA_URL = os.getenv("API_VERIFICAR_FACTURA_URL", "")
 SHAREPOINT_SITE_URL            = os.getenv("SHAREPOINT_SITE_URL", "")
 SHAREPOINT_CARPETA_SIN_APROBAR = os.getenv("SHAREPOINT_CARPETA_SIN_APROBAR", "SIN APROBAR")
 SHAREPOINT_CARPETA_APROBADAS   = os.getenv("SHAREPOINT_CARPETA_APROBADAS", "APROBADAS")
@@ -81,6 +82,7 @@ RUTA_LOG_RECHAZADOS_AGENTE          = os.path.join("logs", "rechazados_agente", 
 RUTA_LOG_APROBADOS_HUMANOS          = os.path.join("logs", "aprobados_area_responsable", "aprobados_area_responsable.log")
 RUTA_LOG_PROVEEDORES_NO_ENCONTRADOS = os.path.join("logs", "proveedores_no_encontrados", "proveedores_no_encontrados.log")
 RUTA_LOG_RECHAZADOS_HUMANOS         = os.path.join("logs", "rechazados_area_responsable", "rechazados_area_responsable.log")
+RUTA_LOG_IGNORADOS                  = os.path.join("logs", "ignorados",                    "ignorados.log")
 
 # ── Fase 2 / 5: detección y clasificación de respuestas humanas ──
 CARPETA_FACTURAS_APROBADAS  = os.getenv("CARPETA_APROBADAS",  "APROBADAS")
@@ -118,8 +120,8 @@ def _crear_logger_archivo(nombre: str, ruta: str) -> logging.Logger:
 
 
 def _configurar_sistema_de_logs() -> tuple:
-    """Crea las 6 carpetas de log y configura un logger de errores (consola+archivo) y 5 loggers de archivo."""
-    for ruta in [RUTA_LOG_ERRORES, RUTA_LOG_APROBADOS_AGENTE, RUTA_LOG_RECHAZADOS_AGENTE, RUTA_LOG_APROBADOS_HUMANOS, RUTA_LOG_PROVEEDORES_NO_ENCONTRADOS, RUTA_LOG_RECHAZADOS_HUMANOS]:
+    """Crea las 7 carpetas de log y configura un logger de errores (consola+archivo) y 6 loggers de archivo."""
+    for ruta in [RUTA_LOG_ERRORES, RUTA_LOG_APROBADOS_AGENTE, RUTA_LOG_RECHAZADOS_AGENTE, RUTA_LOG_APROBADOS_HUMANOS, RUTA_LOG_PROVEEDORES_NO_ENCONTRADOS, RUTA_LOG_RECHAZADOS_HUMANOS, RUTA_LOG_IGNORADOS]:
         Path(os.path.dirname(ruta)).mkdir(parents=True, exist_ok=True)
     logger_main = logging.getLogger("agente_marquillas")
     logger_main.setLevel(logging.ERROR)
@@ -135,11 +137,12 @@ def _configurar_sistema_de_logs() -> tuple:
             _crear_logger_archivo("rechazados_agente",            RUTA_LOG_RECHAZADOS_AGENTE),
             _crear_logger_archivo("aprobados_humanos",            RUTA_LOG_APROBADOS_HUMANOS),
             _crear_logger_archivo("proveedores_no_encontrados",   RUTA_LOG_PROVEEDORES_NO_ENCONTRADOS),
-            _crear_logger_archivo("rechazados_humanos",           RUTA_LOG_RECHAZADOS_HUMANOS))
+            _crear_logger_archivo("rechazados_humanos",           RUTA_LOG_RECHAZADOS_HUMANOS),
+            _crear_logger_archivo("ignorados",                    RUTA_LOG_IGNORADOS))
 
 
 # Inicializar los loggers al momento de importar el módulo
-log, log_aprobados_agente, log_rechazados_agente, log_aprobados_humanos, log_proveedores_no_encontrados, log_rechazados_humanos = _configurar_sistema_de_logs()
+log, log_aprobados_agente, log_rechazados_agente, log_aprobados_humanos, log_proveedores_no_encontrados, log_rechazados_humanos, log_ignorados = _configurar_sistema_de_logs()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -274,6 +277,13 @@ def _registrar_proveedor_no_encontrado(nit_limpio: str, razon_social: str) -> No
     """Registra en el log especializado cuando el NIT del emisor no existe en proveedores.json."""
     log_proveedores_no_encontrados.info(
         f"NO ENCONTRADO | NIT Proveedor: {nit_limpio} | Nombre Proveedor: {razon_social}"
+    )
+
+
+def _registrar_ignorado(numero_factura: str, nit_proveedor: str, nombre_proveedor: str) -> None:
+    """Registra cuando una factura se ignora por ya existir en el sistema."""
+    log_ignorados.info(
+        f"FACTURA DUPLICADA IGNORADA | Factura: {numero_factura} | NIT: {nit_proveedor} | Proveedor: {nombre_proveedor}"
     )
 
 
@@ -1533,6 +1543,34 @@ def notificar_estado_factura(uuid_factura: str, aprobada: int) -> bool:
         return False
 
 
+def factura_ya_existe(numero_factura: str) -> bool:
+    """
+    Consulta la API de PHP para verificar si una factura con ese número
+    ya está registrada en la base de datos.
+
+    Hace GET a {API_VERIFICAR_FACTURA_URL}/{numero_factura}.
+    Si la respuesta tiene "existe": true retorna True.
+    Si la URL está vacía, la petición falla o hay cualquier error retorna False
+    para no bloquear el flujo por un error de conexión.
+    No lanza excepciones.
+    """
+    if not API_VERIFICAR_FACTURA_URL:
+        return False
+
+    try:
+        respuesta = requests.get(
+            f"{API_VERIFICAR_FACTURA_URL}/{numero_factura}",
+            timeout=10,
+        )
+        if respuesta.status_code in (200, 201):
+            return bool(respuesta.json().get("existe", False))
+        return False
+
+    except Exception as error:
+        log.error(f"💥 Error al verificar si la factura {numero_factura} ya existe: {error}")
+        return False
+
+
 def nombre_mes_actual() -> str:
     """
     Retorna el nombre del mes actual en español y en MAYÚSCULAS.
@@ -1900,6 +1938,13 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str, facturas_ap
 
             # Extraer número de factura del XML — más confiable que OpenAI
             numero_factura_xml = extraer_numero_factura_del_xml(bytes_zip)
+
+            # Verificar si la factura ya existe en la base de datos para evitar duplicados
+            if numero_factura_xml and factura_ya_existe(numero_factura_xml):
+                nombre_proveedor_asunto = asunto.split(';')[1].strip() if ';' in asunto else asunto
+                _registrar_ignorado(numero_factura_xml, nit_del_asunto, nombre_proveedor_asunto)
+                print(f"⚠️  Factura duplicada ignorada: {numero_factura_xml} — ya existe en el sistema")
+                return
 
             resultado = verificar_documento_con_claude(texto_pdf, instrucciones)
 
