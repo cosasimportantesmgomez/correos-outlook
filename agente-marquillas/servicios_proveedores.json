@@ -1,0 +1,198 @@
+{
+  "proveedores": {
+    "1152711717": [
+      {
+        "codigo_servicio": "CS45010601",
+        "descripcion_servicio": "SERV MTTO MAQUINARIA IVA, RTE, RTIVA",
+        "motivo": "73",
+        "unidad_negocio": "002",
+        "centro_costos": "72140",
+        "con_iva": false
+      }
+    ],
+    "811026198": [
+      {
+        "codigo_servicio": "CS45010402",
+        "descripcion_servicio": "LICENCIAS DE SOFTWARE SIN IVA",
+        "motivo": "52",
+        "unidad_negocio": "050",
+        "centro_costos": "52101",
+        "con_iva": false
+      }
+    ],
+    "901037027": [
+      {
+        "codigo_servicio": "CS10010301",
+        "descripcion_servicio": "HONO ASESOR JURID, IVA, RETEFTE, RETEIVA",
+        "motivo": "51",
+        "unidad_negocio": "050",
+        "centro_costos": "51101",
+        "con_iva": false
+      }
+    ],
+    "98773169": [
+      {
+        "codigo_servicio": "CS45010601",
+        "descripcion_servicio": "SERV MTTO MAQUINARIA IVA, RTE, RTIVA",
+        "motivo": "73",
+        "unidad_negocio": "002",
+        "centro_costos": "52101",
+        "con_iva": false
+      }
+    ],
+    "900080654": [
+      {
+        "codigo_servicio": "CS05950401",
+        "descripcion_servicio": "ATENCIONES PERSONAL IVA 19%,RTFTE,RTIVA",
+        "motivo": "51",
+        "unidad_negocio": "050",
+        "centro_costos": "51104",
+        "con_iva": true
+      },
+      {
+        "codigo_servicio": "CS05950402",
+        "descripcion_servicio": "ATENCIONES PERSONAL SIN IVA 19%,RTFTE",
+        "motivo": "51",
+        "unidad_negocio": "050",
+        "centro_costos": "51104",
+        "con_iva": false
+      }
+    ],
+    "800201648": [
+      {
+        "codigo_servicio": "CS35011802",
+        "descripcion_servicio": "RECOL MAT CONTAMINADO SIN IVA RTE 4%",
+        "motivo": "91",
+        "unidad_negocio": "",
+        "centro_costos": "",
+        "con_iva": false
+      }
+    ],
+    "901409535": [
+      {
+        "codigo_servicio": "CS35011002",
+        "descripcion_servicio": "SERV FLETES SIN IVA,RTETE",
+        "motivo": "52",
+        "unidad_negocio": "050",
+        "centro_costos": "52101",
+        "con_iva": false
+      }
+    ],
+    "800196722": [
+      {
+        "codigo_servicio": "CS35010201",
+        "descripcion_servicio": "SERV VIGILANCIA IVA,RETEIVA,RETEFTE",
+        "motivo": "",
+        "unidad_negocio": "",
+        "centro_costos": "",
+        "con_iva": false
+      }
+    ],
+    "901256260": [
+      {
+        "codigo_servicio": "CS45010601",
+        "descripcion_servicio": "SERV MTTO MAQUINARIA IVA, RTE, RTIVA",
+        "motivo": "73",
+        "unidad_negocio": "002",
+        "centro_costos": "72140",
+        "con_iva": false
+      }
+    ],
+    "1017195540": [
+      {
+        "codigo_servicio": "CS10010401",
+        "descripcion_servicio": "ASESORIA TRIBUTARIA, IVA,RTEFTE,RETEI",
+        "motivo": "51",
+        "unidad_negocio": "050",
+        "centro_costos": "51101",
+        "con_iva": false
+      }
+    ],
+    "900185532": [
+      {
+        "codigo_servicio": "CS10010401",
+        "descripcion_servicio": "ASESORIA TRIBUTARIA, IVA,RTEFTE,RETEI",
+        "motivo": "51",
+        "unidad_negocio": "050",
+        "centro_costos": "51101",
+        "con_iva": false
+      }
+    ],
+    "891101577": [
+      {
+        "codigo_servicio": "CS35011501",
+        "descripcion_servicio": "SUMINISTRO DE GAS RIONEGRO ",
+        "motivo": "73",
+        "unidad_negocio": "001",
+        "centro_costos": "75707",
+        "con_iva": false
+      }
+    ],
+    "900219834": [
+      {
+        "codigo_servicio": "CS95011101",
+        "descripcion_servicio": "DETALLE DE LA FACTURA ",
+        "motivo": "51",
+        "unidad_negocio": "050",
+        "centro_costos": "51101",
+        "con_iva": false
+      }
+    ],
+    "900625898": [
+      {
+        "codigo_servicio": "CS95010801",
+        "descripcion_servicio": "SERVICIO TELEFONO, IVA,RETEFTE,RETEIVA",
+        "motivo": "51",
+        "unidad_negocio": "050",
+        "centro_costos": "51101",
+        "con_iva": false
+      }
+    ],
+    "811000740": [
+      {
+        "codigo_servicio": "CS35010601",
+        "descripcion_servicio": "SUMINISTRO DE ENERGIA RIONEGRO ",
+        "motivo": "92",
+        "unidad_negocio": "001",
+        "centro_costos": "75101",
+        "con_iva": false
+      }
+    ],
+    "811009149": [
+      {
+        "codigo_servicio": "CS35011901",
+        "descripcion_servicio": "SERVICIO DE ASEO SEDE RIONEGRO",
+        "motivo": "92",
+        "unidad_negocio": "001",
+        "centro_costos": "75101",
+        "con_iva": true
+      },
+      {
+        "codigo_servicio": "CS35011902",
+        "descripcion_servicio": "SERVICIO DE ASEO SEDE RIONEGRO",
+        "motivo": "92",
+        "unidad_negocio": "001",
+        "centro_costos": "75101",
+        "con_iva": false
+      }
+    ],
+    "800094308": [
+      {
+        "codigo_servicio": "CS35010202",
+        "descripcion_servicio": "SERVICIO DE VIGILANCIA FIJO SEDE RIONEGRO",
+        "motivo": "51",
+        "unidad_negocio": "050",
+        "centro_costos": "51106",
+        "con_iva": false
+      },
+      {
+        "codigo_servicio": "CS35010201",
+        "descripcion_servicio": "SERVICIO DE VIGILANCIA FIJO SEDE RIONEGRO",
+        "motivo": "51",
+        "unidad_negocio": "050",
+        "centro_costos": "51106",
+        "con_iva": true
+      }
+    ]
+  }
+}

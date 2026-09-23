@@ -56,9 +56,11 @@ EMAIL_COPIA_SIEMPRE        = [
 INTERVALO_MINUTOS   = int(os.getenv("INTERVALO_MINUTOS", "5"))
 ARCHIVO_PROVEEDORES = "proveedores.json"
 ARCHIVO_CATALOGO_CODIGOS = "catalogo.codigos.json"
+ARCHIVO_SERVICIOS_PROVEEDORES = "servicios_proveedores.json"
 API_FACTURAS_URL    = os.getenv("API_FACTURAS_URL", "")
 API_FACTURAS_URL_ESTADO = os.getenv("API_FACTURAS_URL_ESTADO", "")
 API_VERIFICAR_FACTURA_URL = os.getenv("API_VERIFICAR_FACTURA_URL", "")
+API_ACTIVIDAD_URL = os.getenv("API_ACTIVIDAD_URL", "")
 SHAREPOINT_SITE_URL            = os.getenv("SHAREPOINT_SITE_URL", "")
 SHAREPOINT_CARPETA_SIN_APROBAR = os.getenv("SHAREPOINT_CARPETA_SIN_APROBAR", "SIN APROBAR")
 SHAREPOINT_CARPETA_APROBADAS   = os.getenv("SHAREPOINT_CARPETA_APROBADAS", "APROBADAS")
@@ -168,6 +170,42 @@ def cargar_catalogo_codigos() -> list:
 
 # Cargar el catálogo una sola vez al iniciar el módulo
 CATALOGO_CODIGOS = cargar_catalogo_codigos()
+
+
+def cargar_servicios_proveedores() -> dict:
+    """
+    Carga el archivo servicios_proveedores.json con los servicios
+    predefinidos por proveedor.
+    Retorna el diccionario de proveedores o dict vacío si falla.
+    No lanza excepciones.
+    """
+    try:
+        ruta = Path(ARCHIVO_SERVICIOS_PROVEEDORES)
+        if not ruta.exists():
+            log.error(f"💥 No se encontró '{ARCHIVO_SERVICIOS_PROVEEDORES}' — no hay servicios predefinidos por proveedor")
+            return {}
+        return json.loads(ruta.read_text(encoding="utf-8")).get("proveedores", {})
+    except Exception as error:
+        log.error(f"💥 Error al cargar {ARCHIVO_SERVICIOS_PROVEEDORES}: {error}")
+        return {}
+
+
+# Cargar los servicios predefinidos por proveedor una sola vez al iniciar el módulo
+SERVICIOS_PROVEEDORES = cargar_servicios_proveedores()
+
+
+def obtener_servicios_proveedor(nit: str) -> list | None:
+    """
+    Busca el NIT en SERVICIOS_PROVEEDORES y retorna la lista de servicios
+    predefinidos si existe.
+    Retorna None si el NIT no está en el archivo — indica que hay que
+    usar OpenAI para clasificar.
+    No lanza excepciones.
+    """
+    try:
+        return SERVICIOS_PROVEEDORES.get(nit)
+    except Exception:
+        return None
 
 
 def clasificar_factura_con_openai(datos_factura: dict) -> tuple[str, str]:
@@ -1571,6 +1609,27 @@ def factura_ya_existe(numero_factura: str) -> bool:
         return False
 
 
+def notificar_actividad(activo: bool, mensaje: str = "") -> None:
+    """
+    Notifica a PHP si el agente está activo o inactivo.
+    Hace POST a API_ACTIVIDAD_URL con activo y mensaje.
+    Si la URL está vacía o falla no interrumpe el flujo.
+    Timeout 5 segundos. No lanza excepciones.
+    """
+    if not API_ACTIVIDAD_URL:
+        return
+
+    try:
+        requests.post(
+            API_ACTIVIDAD_URL,
+            json={"activo": activo, "mensaje": mensaje},
+            headers={"Content-Type": "application/json"},
+            timeout=5,
+        )
+    except Exception as error:
+        log.error(f"💥 Error al notificar actividad del agente: {error}")
+
+
 def nombre_mes_actual() -> str:
     """
     Retorna el nombre del mes actual en español y en MAYÚSCULAS.
@@ -2011,10 +2070,34 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str, facturas_ap
             if datos_factura:
                 datos_factura['id_correo_enviado'] = uuid_factura
 
-                # Clasificar contablemente la factura con OpenAI
-                codigo_servicio, descripcion_servicio = clasificar_factura_con_openai(datos_factura)
-                datos_factura['codigo_servicio']      = codigo_servicio
-                datos_factura['descripcion_servicio'] = descripcion_servicio
+                # Intentar servicios predefinidos primero
+                servicios_predefinidos = obtener_servicios_proveedor(nit_limpio)
+
+                if servicios_predefinidos is not None:
+                    # Usar servicios predefinidos del JSON
+                    datos_factura['movimientos_servicio'] = [
+                        {
+                            "codigo_servicio":      s['codigo_servicio'],
+                            "descripcion_servicio": s['descripcion_servicio'],
+                            "motivo":               s.get('motivo', ''),
+                            "unidad_negocio":       s.get('unidad_negocio', ''),
+                            "centro_costos":        s.get('centro_costos', '')
+                        }
+                        for s in servicios_predefinidos
+                    ]
+                else:
+                    # Clasificar con OpenAI — motivo, unidad_negocio y centro_costos
+                    # se dejan quemados porque OpenAI no tiene forma de saber esos datos.
+                    codigo, descripcion = clasificar_factura_con_openai(datos_factura)
+                    datos_factura['movimientos_servicio'] = [
+                        {
+                            "codigo_servicio":      codigo,
+                            "descripcion_servicio": descripcion,
+                            "motivo":               "51",
+                            "unidad_negocio":       "050",
+                            "centro_costos":        "51101"
+                        }
+                    ] if codigo else []
 
                 facturas_aprobadas_ciclo.append(datos_factura)
             else:
@@ -2227,6 +2310,8 @@ def procesar_correos() -> None:
     No retorna nada — todos los resultados se registran en el log.
     Esta función captura todas las excepciones para que el scheduler no se detenga nunca.
     """
+    # notificar_actividad(True, "Agente de almacenes iniciando revisión de facturas")
+
     try:
         print("\nSe inicia proceso de validación de correos.")
         log.info("🔍 Revisando correos nuevos...")
@@ -2271,9 +2356,11 @@ def procesar_correos() -> None:
 
         log.info(f"⏰ Próxima revisión en {INTERVALO_MINUTOS} minutos")
         print(f"Se finalizó la revisión de correos, se hará nuevamente en {INTERVALO_MINUTOS} minutos.")
+        # notificar_actividad(False, "Agente de almacenes finalizó revisión de facturas")
 
     except Exception as error:
         log.error(f"💥 Error en el ciclo de revisión: {error}")
+        # notificar_actividad(False, "Agente de almacenes finalizó con errores")
 
 
 def _verificar_configuracion() -> None:
