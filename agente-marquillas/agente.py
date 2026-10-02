@@ -702,6 +702,7 @@ def extraer_datos_factura_xml(bytes_zip: bytes) -> dict | None:
         # ── Fecha de vencimiento, totales e items (solo existen en el Invoice interno) ──
         fecha_vencimiento = None
         valor_bruto = descuentos = subtotal = impuestos = retencion = valor_total = None
+        # porcentaje_iva = None
         items = []
 
         if factura_interna is not None:
@@ -730,6 +731,10 @@ def extraer_datos_factura_xml(bytes_zip: bytes) -> dict | None:
                 factura_interna.find("cac:WithholdingTaxTotal/cbc:TaxAmount", NS)
             )
 
+            # porcentaje_iva = _flotante(
+            #     factura_interna.find("cac:TaxTotal/cac:TaxSubtotal/cac:TaxCategory/cbc:Percent", NS)
+            # )
+
             for linea in factura_interna.findall("cac:InvoiceLine", NS):
                 descripcion = _texto(linea.find("cac:Item/cbc:Description", NS))
                 if descripcion is None:
@@ -750,6 +755,8 @@ def extraer_datos_factura_xml(bytes_zip: bytes) -> dict | None:
             retencion = 0.00
         if subtotal is None:
             subtotal = valor_bruto
+        # if porcentaje_iva is None:
+        #     porcentaje_iva = 0.0
 
         return {
             "nit_proveedor":     nit_proveedor,
@@ -758,6 +765,7 @@ def extraer_datos_factura_xml(bytes_zip: bytes) -> dict | None:
             "fecha_factura":     fecha_factura,
             "fecha_vencimiento": fecha_vencimiento,
             "tipo_documento":    tipo_documento,
+            # "porcentaje_iva":    porcentaje_iva,
             "totales": {
                 "valor_bruto":  valor_bruto,
                 "descuentos":   descuentos,
@@ -1095,7 +1103,7 @@ def enviar_correo_aprobado(
             "message": {
                 "subject": asunto_correo,
                 "body": {"contentType": "HTML", "content": cuerpo_html},
-                "toRecipients": [{"emailAddress": {"address": e}} for e in principales],
+                "toRecipients": [{"emailAddress": {"address": e}} for e in principales if e],
                 "ccRecipients": [{"emailAddress": {"address": e}} for e in copia if e],
                 "attachments": [{
                     "@odata.type": "#microsoft.graph.fileAttachment",
@@ -2082,6 +2090,7 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str, facturas_ap
                             "motivo":               s.get('motivo', ''),
                             "unidad_negocio":       s.get('unidad_negocio', ''),
                             "centro_costos":        s.get('centro_costos', '')
+                            # "con_iva":              s.get('con_iva', False)
                         }
                         for s in servicios_predefinidos
                     ]
@@ -2096,8 +2105,14 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str, facturas_ap
                             "motivo":               "51",
                             "unidad_negocio":       "050",
                             "centro_costos":        "51101"
+                            # "con_iva":              False
                         }
                     ] if codigo else []
+
+                # Encabezado — porcentaje_iva ya viene de extraer_datos_factura_xml();
+                # valor_iva se toma del total de impuestos ya calculado en 'totales'.
+                # datos_factura['porcentaje_iva'] = datos_factura.get('porcentaje_iva', 0.0)
+                # datos_factura['valor_iva']      = datos_factura.get('totales', {}).get('impuestos', 0.0) or 0.0
 
                 facturas_aprobadas_ciclo.append(datos_factura)
             else:
