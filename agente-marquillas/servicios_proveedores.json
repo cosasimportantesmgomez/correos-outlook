@@ -3,7 +3,7 @@
     "1152711717": [
       {
         "codigo_servicio": "CS45010601",
-        "descripcion_servicio": "SERV MTTO MAQUINARIA IVA, RTE, RTIVA",
+        "descripcion_servicio": "AFILADO DE CUCHILLA GUILLOTINA",
         "motivo": "73",
         "unidad_negocio": "002",
         "centro_costos": "72140",
@@ -13,7 +13,7 @@
     "811026198": [
       {
         "codigo_servicio": "CS45010402",
-        "descripcion_servicio": "LICENCIAS DE SOFTWARE SIN IVA",
+        "descripcion_servicio": "NUMROT MENSUALIDAD",
         "motivo": "52",
         "unidad_negocio": "050",
         "centro_costos": "52101",
@@ -23,7 +23,7 @@
     "901037027": [
       {
         "codigo_servicio": "CS10010301",
-        "descripcion_servicio": "HONO ASESOR JURID, IVA, RETEFTE, RETEIVA",
+        "descripcion_servicio": "Honorarios profesionales de abogado por asesoría laboral durante",
         "motivo": "51",
         "unidad_negocio": "050",
         "centro_costos": "51101",
@@ -33,7 +33,7 @@
     "98773169": [
       {
         "codigo_servicio": "CS45010601",
-        "descripcion_servicio": "SERV MTTO MAQUINARIA IVA, RTE, RTIVA",
+        "descripcion_servicio": "SERVICIO MANTENIMIENTO",
         "motivo": "73",
         "unidad_negocio": "002",
         "centro_costos": "52101",
@@ -43,7 +43,7 @@
     "900080654": [
       {
         "codigo_servicio": "CS05950401",
-        "descripcion_servicio": "ATENCIONES PERSONAL IVA 19%,RTFTE,RTIVA",
+        "descripcion_servicio": "COMPRAS CUMPLEAÑOS MES DE",
         "motivo": "51",
         "unidad_negocio": "050",
         "centro_costos": "51104",
@@ -61,7 +61,7 @@
     "800201648": [
       {
         "codigo_servicio": "CS35011802",
-        "descripcion_servicio": "RECOL MAT CONTAMINADO SIN IVA RTE 4%",
+        "descripcion_servicio": "RECOLECCION MATERIAL CONTAMINADO",
         "motivo": "91",
         "unidad_negocio": "",
         "centro_costos": "",
@@ -71,7 +71,7 @@
     "901409535": [
       {
         "codigo_servicio": "CS35011002",
-        "descripcion_servicio": "SERV FLETES SIN IVA,RTETE",
+        "descripcion_servicio": "SERVICIO DE FLETE",
         "motivo": "52",
         "unidad_negocio": "050",
         "centro_costos": "52101",
@@ -81,7 +81,7 @@
     "800196722": [
       {
         "codigo_servicio": "CS35010201",
-        "descripcion_servicio": "SERV VIGILANCIA IVA,RETEIVA,RETEFTE",
+        "descripcion_servicio": "SERVICIO MONITOREO DE ALARMA",
         "motivo": "",
         "unidad_negocio": "",
         "centro_costos": "",
@@ -91,7 +91,7 @@
     "901256260": [
       {
         "codigo_servicio": "CS45010601",
-        "descripcion_servicio": "SERV MTTO MAQUINARIA IVA, RTE, RTIVA",
+        "descripcion_servicio": "AFILADO DE CUCHILLA GUILLOTINA",
         "motivo": "73",
         "unidad_negocio": "002",
         "centro_costos": "72140",
@@ -101,7 +101,7 @@
     "1017195540": [
       {
         "codigo_servicio": "CS10010401",
-        "descripcion_servicio": "ASESORIA TRIBUTARIA, IVA,RTEFTE,RETEI",
+        "descripcion_servicio": "ASESORIA CONTABLE MES DE",
         "motivo": "51",
         "unidad_negocio": "050",
         "centro_costos": "51101",
@@ -111,7 +111,7 @@
     "900185532": [
       {
         "codigo_servicio": "CS10010401",
-        "descripcion_servicio": "ASESORIA TRIBUTARIA, IVA,RTEFTE,RETEI",
+        "descripcion_servicio": "ASESORIA JURIDICA PERMANENTE MES DE",
         "motivo": "51",
         "unidad_negocio": "050",
         "centro_costos": "51101",
@@ -121,7 +121,7 @@
     "891101577": [
       {
         "codigo_servicio": "CS35011501",
-        "descripcion_servicio": "SUMINISTRO DE GAS RIONEGRO ",
+        "descripcion_servicio": "SUMINISTRO DE GAS RIONEGRO",
         "motivo": "73",
         "unidad_negocio": "001",
         "centro_costos": "75707",
@@ -141,7 +141,7 @@
     "900625898": [
       {
         "codigo_servicio": "CS95010801",
-        "descripcion_servicio": "SERVICIO TELEFONO, IVA,RETEFTE,RETEIVA",
+        "descripcion_servicio": "COMPRA COMBUSTIBLE VEHICULO PLACA ",
         "motivo": "51",
         "unidad_negocio": "050",
         "centro_costos": "51101",
