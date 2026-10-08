@@ -193,6 +193,26 @@
         "centro_costos": "51106",
         "con_iva": true
       }
+    ],
+    "860016640": [
+      {
+        "codigo_servicio": "CS35011001",
+        "descripcion_servicio": "SERVICIO DE FLETE",
+        "motivo": "52",
+        "unidad_negocio": "050",
+        "centro_costos": "52101",
+        "con_iva": false
+      }
+    ],
+    "890928794": [
+      {
+        "codigo_servicio": "CS10010201",
+        "descripcion_servicio": "HONORARIOS REVISORIA FISCAL",
+        "motivo": "51",
+        "unidad_negocio": "050",
+        "centro_costos": "51101",
+        "con_iva": false
+      }
     ]
   }
 }
