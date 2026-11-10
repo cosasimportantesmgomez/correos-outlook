@@ -742,10 +742,21 @@ def extraer_datos_factura_xml(bytes_zip: bytes) -> dict | None:
                 codigo = _texto(
                     linea.find("cac:Item/cac:SellersItemIdentification/cbc:ID", NS)
                 )
+
+                # Cantidad y unidad de medida vienen del mismo tag (unitCode es atributo)
+                tag_cantidad  = linea.find("cbc:InvoicedQuantity", NS)
+                cantidad      = _flotante(tag_cantidad)
+                unidad_medida = tag_cantidad.get("unitCode") if tag_cantidad is not None else None
+
+                valor_unitario = _flotante(linea.find("cac:Price/cbc:PriceAmount", NS))
+
                 items.append({
                     "codigo":            codigo or "",
                     "descripcion":       descripcion,
                     "valor_total_linea": _flotante(linea.find("cbc:LineExtensionAmount", NS)),
+                    "cantidad":          cantidad,
+                    "valor_unitario":    valor_unitario,
+                    "unidad_medida":     unidad_medida,
                 })
 
         # Valores por defecto acordados para los opcionales no encontrados
@@ -2089,8 +2100,8 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str, facturas_ap
                             "descripcion_servicio": s['descripcion_servicio'],
                             "motivo":               s.get('motivo', ''),
                             "unidad_negocio":       s.get('unidad_negocio', ''),
-                            "centro_costos":        s.get('centro_costos', '')
-                            # "con_iva":              s.get('con_iva', False)
+                            "centro_costos":        s.get('centro_costos', ''),
+                            "con_iva":              s.get('con_iva', False)
                         }
                         for s in servicios_predefinidos
                     ]
@@ -2104,8 +2115,8 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str, facturas_ap
                             "descripcion_servicio": descripcion,
                             "motivo":               "51",
                             "unidad_negocio":       "050",
-                            "centro_costos":        "51101"
-                            # "con_iva":              False
+                            "centro_costos":        "51101",
+                            "con_iva":              False
                         }
                     ] if codigo else []
 
