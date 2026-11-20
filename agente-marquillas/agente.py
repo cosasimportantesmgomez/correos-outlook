@@ -39,7 +39,7 @@ load_dotenv()
 # ═══════════════════════════════════════════════════════════════
 # El resto del código usa estas variables directamente, nunca os.getenv() interno.
 
-OPENAI_API_KEY      = os.getenv("OPENAI_API_KEY", "")
+OPENAI_API_KEY      = os.getenv("OPENAI_API_KEY_DOCUMAR", "")
 AZURE_CLIENT_ID     = os.getenv("AZURE_CLIENT_ID", "")
 AZURE_CLIENT_SECRET = os.getenv("AZURE_CLIENT_SECRET", "")
 AZURE_TENANT_ID     = os.getenv("AZURE_TENANT_ID", "")
@@ -2453,7 +2453,7 @@ def _verificar_configuracion() -> None:
     Lanza: SystemExit con código 1 si falta alguna variable crítica (el agente no puede operar).
     """
     variables_requeridas = {
-        "OPENAI_API_KEY":            OPENAI_API_KEY,
+        "OPENAI_API_KEY_DOCUMAR":    OPENAI_API_KEY,
         "AZURE_CLIENT_ID":          AZURE_CLIENT_ID,
         "AZURE_CLIENT_SECRET":      AZURE_CLIENT_SECRET,
         "AZURE_TENANT_ID":          AZURE_TENANT_ID,
