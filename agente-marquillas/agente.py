@@ -703,6 +703,7 @@ def extraer_datos_factura_xml(bytes_zip: bytes) -> dict | None:
         fecha_vencimiento = None
         valor_bruto = descuentos = subtotal = impuestos = retencion = valor_total = None
         # porcentaje_iva = None
+        impuestos_por_tasa = []
         items = []
 
         if factura_interna is not None:
@@ -727,6 +728,34 @@ def extraer_datos_factura_xml(bytes_zip: bytes) -> dict | None:
             montos_impuesto = [m for m in montos_impuesto if m is not None]
             impuestos = sum(montos_impuesto) if montos_impuesto else None
 
+            # Base e impuesto de cada tarifa por separado — el ERP los necesita para
+            # repartir facturas con más de una tarifa. Nunca debe impedir el envío.
+            try:
+                for total_impuesto in factura_interna.findall("cac:TaxTotal", NS):
+                    for subtotal_impuesto in total_impuesto.findall("cac:TaxSubtotal", NS):
+                        base_tasa     = _flotante(subtotal_impuesto.find("cbc:TaxableAmount", NS))
+                        impuesto_tasa = _flotante(subtotal_impuesto.find("cbc:TaxAmount", NS))
+                        if base_tasa is None or impuesto_tasa is None:
+                            log.warning(
+                                f"⚠️  TaxSubtotal sin base o sin impuesto — se omite de "
+                                f"impuestos_por_tasa | Factura: {numero_factura}"
+                            )
+                            continue
+                        tasa = _flotante(subtotal_impuesto.find("cac:TaxCategory/cbc:Percent", NS))
+                        if tasa is None:
+                            tasa = _flotante(subtotal_impuesto.find("cbc:Percent", NS))
+                        impuestos_por_tasa.append({
+                            "codigo_impuesto": _texto(subtotal_impuesto.find(
+                                "cac:TaxCategory/cac:TaxScheme/cbc:ID", NS
+                            )) or "",
+                            "tasa":            tasa,
+                            "base":            base_tasa,
+                            "impuesto":        impuesto_tasa,
+                        })
+            except Exception as error:
+                impuestos_por_tasa = []
+                log.error(f"💥 Error al extraer impuestos por tasa | Factura: {numero_factura} | {error}")
+
             retencion = _flotante(
                 factura_interna.find("cac:WithholdingTaxTotal/cbc:TaxAmount", NS)
             )
@@ -750,6 +779,31 @@ def extraer_datos_factura_xml(bytes_zip: bytes) -> dict | None:
 
                 valor_unitario = _flotante(linea.find("cac:Price/cbc:PriceAmount", NS))
 
+                # Tarifa de IVA de esta línea — el ERP la usa para saber a qué servicio
+                # va cada línea. Un error aquí solo afecta a esta línea, nunca al envío.
+                try:
+                    subtotales_linea = [
+                        subtotal_linea
+                        for total_linea in linea.findall("cac:TaxTotal", NS)
+                        for subtotal_linea in total_linea.findall("cac:TaxSubtotal", NS)
+                    ]
+                    if not subtotales_linea:
+                        tasa_iva = 0.0
+                    else:
+                        subtotal_iva = next(
+                            (
+                                s for s in subtotales_linea
+                                if _texto(s.find("cac:TaxCategory/cac:TaxScheme/cbc:ID", NS)) == "01"
+                            ),
+                            subtotales_linea[0],
+                        )
+                        tasa_iva = _flotante(subtotal_iva.find("cac:TaxCategory/cbc:Percent", NS))
+                        if tasa_iva is None:
+                            tasa_iva = _flotante(subtotal_iva.find("cbc:Percent", NS))
+                except Exception as error:
+                    tasa_iva = None
+                    log.error(f"💥 Error al extraer tasa_iva de una línea | Factura: {numero_factura} | {error}")
+
                 items.append({
                     "codigo":            codigo or "",
                     "descripcion":       descripcion,
@@ -757,6 +811,7 @@ def extraer_datos_factura_xml(bytes_zip: bytes) -> dict | None:
                     "cantidad":          cantidad,
                     "valor_unitario":    valor_unitario,
                     "unidad_medida":     unidad_medida,
+                    "tasa_iva":          tasa_iva,
                 })
 
         # Valores por defecto acordados para los opcionales no encontrados
@@ -784,6 +839,7 @@ def extraer_datos_factura_xml(bytes_zip: bytes) -> dict | None:
                 "impuestos":    impuestos,
                 "retencion":    retencion,
                 "valor_total":  valor_total,
+                "impuestos_por_tasa": impuestos_por_tasa,
             },
             "items": items,
         }
