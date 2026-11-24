@@ -9,9 +9,9 @@ Uso desde el ciclo (una línea por llamada):
     ecosistema.iniciar(total)                         -> paso "revisando"
     ecosistema.paso("validando", None, actual, total) -> "Factura 2 de 5"
     ecosistema.paso("verificando")                    -> reusa actual/total del documento en curso
-    ecosistema.terminar(ok, procesadas)               -> "listo" o "error" y apaga el latido
+    ecosistema.terminar(ok, procesadas)               -> apaga el latido y envía "listo" o "error"
 
-Se desactiva en silencio si ECOSISTEMA_TOKEN está vacío o si no hay URL base
+El endpoint no requiere token. Se desactiva en silencio si no hay URL base
 (se toma de API_FACTURAS_URL, la misma que usa /ws/recibir-facturas).
 
 IMPORTANTE: mensaje y datos solo llevan conteos y el tipo de paso — se muestran
@@ -39,7 +39,6 @@ _candado = threading.Lock()
 _estado = {
     "activo":   False,
     "url":      "",
-    "token":    "",
     "episodio": 0,
     "evento":   None,   # último evento enviado — lo reenvía el latido
     "actual":   0,
@@ -59,15 +58,10 @@ def _url_base() -> str:
     return f"{partes.scheme}://{partes.netloc}" if partes.scheme and partes.netloc else ""
 
 
-def _post(url: str, token: str, cuerpo: dict) -> None:
+def _post(url: str, cuerpo: dict) -> None:
     """Un único intento, timeout corto; cualquier fallo se traga."""
     try:
-        requests.post(
-            url,
-            json=cuerpo,
-            headers={"X-Ecosistema-Token": token},
-            timeout=TIMEOUT_SEGUNDOS,
-        )
+        requests.post(url, json=cuerpo, timeout=TIMEOUT_SEGUNDOS)
     except Exception as error:
         try:
             _log.debug(f"ecosistema: envío fallido ({type(error).__name__})")
@@ -75,10 +69,10 @@ def _post(url: str, token: str, cuerpo: dict) -> None:
             pass
 
 
-def _enviar(url: str, token: str, cuerpo: dict) -> None:
+def _enviar(url: str, cuerpo: dict) -> None:
     """Lanza el POST en un hilo daemon para no frenar nunca al agente."""
     try:
-        threading.Thread(target=_post, args=(url, token, cuerpo), daemon=True).start()
+        threading.Thread(target=_post, args=(url, cuerpo), daemon=True).start()
     except Exception:
         pass
 
@@ -90,10 +84,21 @@ def _latido(parar: threading.Event) -> None:
             with _candado:
                 if not _estado["activo"] or _estado["parar"] is not parar or not _estado["evento"]:
                     return
-                url, token, cuerpo = _estado["url"], _estado["token"], dict(_estado["evento"])
-            _enviar(url, token, cuerpo)
+                url, cuerpo = _estado["url"], dict(_estado["evento"])
+            _enviar(url, cuerpo)
     except Exception:
         pass
+
+
+def _armar_evento(paso: str, mensaje: str, datos: dict) -> dict:
+    """Cuerpo JSON del aviso. Debe llamarse con _candado tomado."""
+    return {
+        "agente":   AGENTE,
+        "episodio": _estado["episodio"],
+        "paso":     paso,
+        "mensaje":  mensaje,
+        "datos":    datos,
+    }
 
 
 def _registrar_y_enviar(paso: str, mensaje: str, datos: dict) -> None:
@@ -101,34 +106,26 @@ def _registrar_y_enviar(paso: str, mensaje: str, datos: dict) -> None:
     with _candado:
         if not _estado["activo"]:
             return
-        cuerpo = {
-            "agente":   AGENTE,
-            "episodio": _estado["episodio"],
-            "paso":     paso,
-            "mensaje":  mensaje,
-            "datos":    datos,
-        }
+        cuerpo = _armar_evento(paso, mensaje, datos)
         _estado["evento"] = cuerpo
-        url, token = _estado["url"], _estado["token"]
-    _enviar(url, token, dict(cuerpo))
+        url = _estado["url"]
+    _enviar(url, dict(cuerpo))
 
 
 def iniciar(total: int) -> None:
     """Abre el episodio del ciclo, envía 'revisando' y arranca el latido."""
     try:
-        token = os.getenv("ECOSISTEMA_TOKEN", "").strip()
-        base  = _url_base()
+        base = _url_base()
         with _candado:
             if _estado["parar"] is not None:
                 _estado["parar"].set()  # Por si quedó un latido de un ciclo anterior
             _estado.update(activo=False, evento=None, parar=None, actual=0, total=0)
-            if not token or not base:
-                return  # Desactivado en silencio
+            if not base:
+                return  # Sin URL base: desactivado en silencio
             parar = threading.Event()
             _estado.update(
                 activo=True,
                 url=base + RUTA_EVENTO,
-                token=token,
                 episodio=int(time.time() * 1000),
                 total=int(total),
                 parar=parar,
@@ -164,23 +161,31 @@ def paso(paso: str, mensaje: str | None = None, actual: int | None = None, total
 
 
 def terminar(ok: bool, procesadas: int | None = None) -> None:
-    """Envía 'listo' o 'error' y apaga el latido. Sin ciclo abierto no hace nada."""
+    """
+    Apaga el latido y DESPUÉS envía 'listo' o 'error', para que ningún latido salga
+    tras el cierre. Sin ciclo abierto no hace nada.
+    """
     try:
         with _candado:
             if not _estado["activo"]:
                 return
-            if procesadas is None:
-                procesadas = _estado["actual"]
-            total = _estado["total"]
-        if ok:
-            _registrar_y_enviar("listo", f"Ciclo terminado: {int(procesadas)} procesadas",
-                                {"actual": int(procesadas), "total": total})
-        else:
-            _registrar_y_enviar("error", "Error en el ciclo",
-                                {"actual": _estado["actual"], "total": total})
-        with _candado:
+            # 1) Apagar el latido y cerrar el ciclo
             if _estado["parar"] is not None:
                 _estado["parar"].set()
-            _estado.update(activo=False, evento=None, parar=None)
+            _estado.update(activo=False, parar=None)
+            # 2) Armar el evento final
+            total = _estado["total"]
+            if ok:
+                if procesadas is None:
+                    procesadas = _estado["actual"]
+                cuerpo = _armar_evento("listo", f"Ciclo terminado: {int(procesadas)} procesadas",
+                                       {"actual": int(procesadas), "total": total})
+            else:
+                cuerpo = _armar_evento("error", "Error en el ciclo",
+                                       {"actual": _estado["actual"], "total": total})
+            _estado["evento"] = None
+            url = _estado["url"]
+        # 3) Enviar el cierre
+        _enviar(url, cuerpo)
     except Exception:
         pass
