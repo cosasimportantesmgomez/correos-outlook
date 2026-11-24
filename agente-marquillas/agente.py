@@ -31,6 +31,8 @@ import schedule       # Planificador de tareas periódicas
 from openai import OpenAI          # Cliente oficial de OpenAI
 from dotenv import load_dotenv    # Carga variables desde el archivo .env
 
+import ecosistema                 # Avisos al ecosistema 3D de Marquillas Store (nunca bloquea)
+
 # Cargar las variables de entorno desde el archivo .env antes de cualquier otra cosa
 load_dotenv()
 
@@ -2025,11 +2027,14 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str, facturas_ap
     try:
         # ── Caso 2: Respuesta humana a una factura del agente ───────────────────
         if es_respuesta_humana(correo):
+            ecosistema.paso("clasificando")
             instrucciones_clasificador = cargar_instrucciones_clasificador()
             clasificacion = clasificar_respuesta_humana(correo, instrucciones_clasificador)
             if clasificacion == "APROBADO":
+                ecosistema.paso("archivando")
                 procesar_aprobacion(token, correo)
             elif clasificacion == "RECHAZADO":
+                ecosistema.paso("archivando")
                 procesar_rechazo(token, correo)
             else:
                 log.info(f"⏭️  Respuesta clasificada como NINGUNO — se ignora: '{asunto}'")
@@ -2069,10 +2074,12 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str, facturas_ap
                 nombre_proveedor_nota = asunto.split(';')[1].strip() if ';' in asunto else asunto
                 print(f"🔕 Nota crédito detectada — ignorada: {nombre_proveedor_nota}")
                 # Subir nota crédito a SharePoint
+                ecosistema.paso("archivando")
                 subir_nota_credito_a_sharepoint(token, bytes_zip, nombre_proveedor_nota)
                 return  # Nota crédito — ignorar sin log, sin Claude, sin marcar como leído
 
             # Extraer número de factura del XML — más confiable que OpenAI
+            ecosistema.paso("verificando")
             numero_factura_xml = extraer_numero_factura_del_xml(bytes_zip)
 
             # Verificar si la factura ya existe en la base de datos para evitar duplicados
@@ -2111,6 +2118,7 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str, facturas_ap
                 return  # No marcar como leído — factura rechazada por Claude
 
             # ── Fase 3: buscar el proveedor y determinar destinatarios ──
+            ecosistema.paso("clasificando")
             # Preferir el NIT del asunto — ya fue validado contra proveedores.json antes de
             # llamar a OpenAI (líneas arriba). Solo se usa el NIT leído por OpenAI del PDF
             # como respaldo cuando el asunto no traía uno (evita que un error de lectura
@@ -2187,12 +2195,14 @@ def procesar_un_correo(token: str, correo: dict, instrucciones: str, facturas_ap
 
             # Subir PDF a SharePoint carpeta SIN APROBAR — se hace ANTES de enviar el correo
             # porque el item_id debe viajar en el REF-AGENTE. Si falla, el flujo continúa.
+            ecosistema.paso("archivando")
             item_id_sharepoint = subir_pdf_a_sharepoint(token, bytes_pdf, nuevo_nombre)
             if item_id_sharepoint:
                 print(f"📁 PDF subido a SharePoint - {SHAREPOINT_CARPETA_SIN_APROBAR}: {nuevo_nombre}")
             else:
                 log.error(f"No se pudo subir el PDF a SharePoint: {nuevo_nombre}")
 
+            ecosistema.paso("notificando")
             _registrar_aprobado_agente(correo_id, asunto, resultado, nit_limpio, lista_almacen)
             destinatarios = determinar_destinatarios(lista_almacen, nit_limpio)
             enviar_correo_aprobado(token, bytes_pdf, nuevo_nombre, resultado, destinatarios, item_id_sharepoint or "", uuid_factura)
@@ -2394,6 +2404,7 @@ def procesar_correos() -> None:
     """
     # notificar_actividad(True, "Agente de almacenes iniciando revisión de facturas")
 
+    ciclo_ok, cantidad = False, 0  # Solo para el aviso final al ecosistema
     try:
         print("\nSe inicia proceso de validación de correos.")
         log.info("🔍 Revisando correos nuevos...")
@@ -2429,7 +2440,9 @@ def procesar_correos() -> None:
             log.info("📭 No hay correos nuevos")
         else:
             log.info(f"📧 {cantidad} correo(s) nuevo(s) encontrado(s)")
-            for correo in todos_los_correos:
+            ecosistema.iniciar(cantidad)
+            for numero, correo in enumerate(todos_los_correos, start=1):
+                ecosistema.paso("validando", None, numero, cantidad)
                 procesar_un_correo(token_acceso, correo, instrucciones, facturas_aprobadas_ciclo)
 
         # Enviar a la API externa todas las facturas aprobadas del ciclo en una sola petición
@@ -2439,10 +2452,14 @@ def procesar_correos() -> None:
         log.info(f"⏰ Próxima revisión en {INTERVALO_MINUTOS} minutos")
         print(f"Se finalizó la revisión de correos, se hará nuevamente en {INTERVALO_MINUTOS} minutos.")
         # notificar_actividad(False, "Agente de almacenes finalizó revisión de facturas")
+        ciclo_ok = True
 
     except Exception as error:
         log.error(f"💥 Error en el ciclo de revisión: {error}")
         # notificar_actividad(False, "Agente de almacenes finalizó con errores")
+
+    finally:
+        ecosistema.terminar(ciclo_ok, cantidad)  # Sin ciclo abierto (0 correos) no envía nada
 
 
 def _verificar_configuracion() -> None:
